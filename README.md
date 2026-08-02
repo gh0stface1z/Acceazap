@@ -38,7 +38,7 @@ It’s designed with a **WhatsApp-like experience** plus extra admin features �
 ## 📸 Screenshots
 
 ### 🔐 Login Page
-![Login Page](screenshots/LoginPage.png)
+![Login Page](screenshot/LoginPage.png)
 
 ### 💬 Admin Chat Page
 ![Admin Chat Page](screenshots/AdminChatPage.png)
