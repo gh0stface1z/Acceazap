@@ -938,31 +938,19 @@ function attachFirebaseListeners() {
 
 // Login system
 async function login(username, password) {
-  const key = mkKey(username);
-  if (!key || !password) {
-    showNotification("Enter both a username and password.", 'error');
+  if (!username || !password) {
+    showNotification("Digite seu nome e sua senha.", 'error');
     return;
   }
 
-  try {
-    elements.loginButton.disabled = true;
-    elements.loginButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Signing in&hellip;';
+  const user = {
+    name: username.trim(),
+    role: "user"
+  };
 
-    const snapshot = await get(child(usersRef, key));
-    if (!snapshot.exists()) { showNotification("That username doesn't exist.", 'error'); return; }
-
-    const userData = snapshot.val();
-    if (userData.pass !== password) { showNotification("That password isn't right.", 'error'); return; }
-
-    const user = { name: key, role: userData.role };
-    sessionStorage.setItem("kikochat_user", JSON.stringify(user));
-    initChatUI(user);
-  } catch (error) {
-    showNotification("Couldn't sign in. Try again.", 'error');
-  } finally {
-    elements.loginButton.disabled = false;
-    elements.loginButton.innerHTML = '<span>Entrar</span><i class="fas fa-arrow-right"></i>';
-  }
+  sessionStorage.setItem("kikochat_user", JSON.stringify(user));
+  initChatUI(user);
+}
 }
 
 function logout() {
