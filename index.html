@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>KikoChat</title>
+<title>ACCEA</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -961,7 +961,7 @@ async function login(username, password) {
     showNotification("Couldn't sign in. Try again.", 'error');
   } finally {
     elements.loginButton.disabled = false;
-    elements.loginButton.innerHTML = '<span>Sign in</span><i class="fas fa-arrow-right"></i>';
+    elements.loginButton.innerHTML = '<span>Entrar</span><i class="fas fa-arrow-right"></i>';
   }
 }
 
@@ -1060,7 +1060,7 @@ window.addEventListener("load", async () => {
   }
 });
 
-window.KikoChat = {
+window.ACCEA = {
   sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, setTheme, toggleReaction
 };
 
@@ -1069,30 +1069,30 @@ window.addEventListener("beforeunload", () => sessionStorage.clear());
 
 <style>
 /* ============================================
-   KikoChat — "Lantern Dusk" design system
+   ACCEA — dark blue design system
    A cat wandering a night market: deep indigo
    dusk, warm lantern-gold accents, soft glow.
    ============================================ */
 
 :root {
-  --ink-950: #100e1c;
-  --ink-900: #171328;
-  --ink-850: #1c1832;
-  --ink-800: #241f3d;
-  --ink-700: #322b4d;
-  --ink-600: #423a63;
+  --ink-950: #0B0D12;
+  --ink-900: #11141B;
+  --ink-850: #151922;
+  --ink-800: #1A1F29;
+  --ink-700: #252B36;
+  --ink-600: #343C4A;
 
-  --paper: #f4eee3;
-  --mist: #a99bc9;
-  --mist-dim: #766b96;
+  --paper: #F5F7FA;
+  --mist: #A7B0C0;
+  --mist-dim: #737D8F;
 
-  --amber-300: #f6cd94;
-  --amber-400: #f0b571;
-  --amber-500: #e6a052;
-  --amber-600: #cf8636;
+  --amber-300: #93C5FD;
+  --amber-400: #60A5FA;
+  --amber-500: #3B82F6;
+  --amber-600: #2563EB;
 
-  --sage: #7fca9f;
-  --coral: #ea7a86;
+  --sage: #4ADE80;
+  --coral: #F87171;
 
   --bg-primary: var(--ink-950);
   --bg-secondary: var(--ink-900);
@@ -1111,15 +1111,15 @@ window.addEventListener("beforeunload", () => sessionStorage.clear());
   --accent: var(--amber-500);
   --accent-soft: var(--amber-400);
   --accent-strong: var(--amber-600);
-  --accent-glow: rgba(230, 160, 82, 0.35);
+  --accent-glow: rgba(59, 130, 246, 0.28);
 
   --success: var(--sage);
   --warning: var(--amber-400);
   --error: var(--coral);
   --online: var(--sage);
 
-  --my-bubble: linear-gradient(155deg, #e6a052 0%, #cf8636 100%);
-  --other-bubble: var(--ink-800);
+  --my-bubble: linear-gradient(155deg, #3B82F6 0%, #2563EB 100%);
+  --other-bubble: #1A1F29;
 
   --shadow-sm: 0 2px 8px rgba(8, 6, 18, 0.28);
   --shadow-md: 0 8px 20px rgba(8, 6, 18, 0.32);
@@ -1152,17 +1152,17 @@ window.addEventListener("beforeunload", () => sessionStorage.clear());
   --text-secondary: #6b5f7f;
   --text-tertiary: #948a9f;
 
-  --accent: #cf8636;
-  --accent-soft: #e6a052;
-  --accent-strong: #a8681f;
-  --accent-glow: rgba(207, 134, 54, 0.22);
+  --accent: #2563EB;
+  --accent-soft: #3B82F6;
+  --accent-strong: #1D4ED8;
+  --accent-glow: rgba(37, 99, 235, 0.18);
 
   --success: #2f9e63;
   --warning: #b8791f;
   --error: #d5495a;
   --online: #2f9e63;
 
-  --my-bubble: linear-gradient(155deg, #e6a052 0%, #cf8636 100%);
+  --my-bubble: linear-gradient(155deg, #3B82F6 0%, #2563EB 100%);
   --other-bubble: #ffffff;
 
   --shadow-sm: 0 2px 8px rgba(60, 45, 20, 0.06);
@@ -1231,13 +1231,13 @@ mark {
   display: flex; align-items: center; justify-content: center;
   font-size: 30px;
   background: radial-gradient(circle at 35% 30%, var(--amber-300), var(--accent-strong) 80%);
-  box-shadow: 0 0 0 1px rgba(230,160,82,0.3), 0 0 36px 6px var(--accent-glow);
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.3), 0 0 36px 6px var(--accent-glow);
   animation: glow 3.5s ease-in-out infinite;
 }
 
 @keyframes glow {
-  0%, 100% { box-shadow: 0 0 0 1px rgba(230,160,82,0.3), 0 0 28px 4px var(--accent-glow); }
-  50% { box-shadow: 0 0 0 1px rgba(230,160,82,0.4), 0 0 42px 10px var(--accent-glow); }
+  0%, 100% { box-shadow: 0 0 0 1px rgba(59,130,246,0.3), 0 0 28px 4px var(--accent-glow); }
+  50% { box-shadow: 0 0 0 1px rgba(59,130,246,0.4), 0 0 42px 10px var(--accent-glow); }
 }
 
 .brand-word {
@@ -1815,20 +1815,20 @@ mark {
 <!-- Login View -->
 <div id="loginView">
   <div class="login-card">
-    <div class="lantern">🐱</div>
-    <div class="brand-word">KikoChat</div>
-    <div class="brand-tagline">A cozy corner for your team to talk.</div>
+    <div class="lantern">🐰</div>
+    <div class="brand-word">ACCEA</div>
+    <div class="brand-tagline">Seu espaço para conversar.</div>
 
     <div class="form-group">
-      <label class="field-label" for="usernameLogin">Username</label>
-      <input id="usernameLogin" class="form-input" placeholder="e.g. yuki" autocomplete="username" />
+      <label class="field-label" for="usernameLogin">Nome de usuário</label>
+      <input id="usernameLogin" class="form-input" placeholder="Digite seu nome" autocomplete="username" />
     </div>
     <div class="form-group">
-      <label class="field-label" for="passLogin">Password</label>
-      <input id="passLogin" class="form-input" type="password" placeholder="••••••••" autocomplete="current-password" />
+      <label class="field-label" for="passLogin">Senha</label>
+      <input id="passLogin" class="form-input" type="password" placeholder="Digite sua senha" autocomplete="current-password" />
     </div>
     <button id="loginButton" class="btn-primary">
-      <span>Sign in</span><i class="fas fa-arrow-right"></i>
+      <span>Entrar</span><i class="fas fa-arrow-right"></i>
     </button>
   </div>
 </div>
@@ -1839,8 +1839,8 @@ mark {
   <div class="left-panel">
     <div class="panel-header">
       <div class="header-left">
-        <div class="header-logo">🐱</div>
-        <div class="header-title">KikoChat</div>
+        <div class="header-logo">🐰</div>
+        <div class="header-title">ACCEA</div>
       </div>
       <div class="header-actions">
         <button id="themeToggle" class="icon-button" title="Toggle theme"><i class="fas fa-moon"></i></button>
@@ -1860,24 +1860,24 @@ mark {
 
     <div class="search-container">
       <i class="fas fa-magnifying-glass search-icon"></i>
-      <input id="searchInput" class="search-input" placeholder="Search messages…" />
+      <input id="searchInput" class="search-input" placeholder="Pesquisar mensagens…" />
       <button id="searchClearBtn" class="search-clear"><i class="fas fa-xmark"></i></button>
       <div id="searchResultCount"></div>
     </div>
 
-    <div class="section-label"><span class="dot"></span>People (<span id="onlineCount">0</span> online)</div>
+    <div class="section-label"><span class="dot"></span>Pessoas (<span id="onlineCount">0</span> online)</div>
     <div id="usersList"></div>
 
     <div id="adminPanel">
-      <div class="admin-title">Admin tools</div>
+      <div class="admin-title">Ferramentas do administrador</div>
       <div class="admin-section">
-        <input id="newUsername" class="admin-input" placeholder="Username" />
-        <input id="newPass" class="admin-input" placeholder="Password" />
+        <input id="newUsername" class="admin-input" placeholder="Nome de usuário" />
+        <input id="newPass" class="admin-input" placeholder="Senha" />
       </div>
       <div class="admin-section">
-        <button id="addUserBtn" class="btn-small btn-secondary">Add person</button>
-        <button id="addAdminBtn" class="btn-small btn-secondary">Add admin</button>
-        <button id="clearChatBtn" class="btn-small btn-danger">Clear chat</button>
+        <button id="addUserBtn" class="btn-small btn-secondary">Adicionar pessoa</button>
+        <button id="addAdminBtn" class="btn-small btn-secondary">Adicionar admin</button>
+        <button id="clearChatBtn" class="btn-small btn-danger">Limpar conversa</button>
       </div>
     </div>
   </div>
@@ -1890,8 +1890,8 @@ mark {
       <div class="chat-info">
         <button id="backToUsersBtn" aria-label="Back to people"><i class="fas fa-arrow-left"></i></button>
         <div>
-          <div class="room-title">General room</div>
-          <div class="room-sub">Everyone can see this conversation</div>
+          <div class="room-title">Conversa do grupo</div>
+          <div class="room-sub">Todos podem ver esta conversa</div>
         </div>
       </div>
       <div class="chat-actions"></div>
@@ -1919,7 +1919,7 @@ mark {
       <div class="composer" id="composer">
         <button id="attachBtn" class="composer-btn" title="Attach a photo or video"><i class="fas fa-paperclip"></i></button>
         <input type="file" id="fileInput" accept="image/*,video/*" hidden />
-        <textarea id="textInput" placeholder="Message the room…" rows="1"></textarea>
+        <textarea id="textInput" placeholder="Digite uma mensagem…" rows="1"></textarea>
         <button id="sendBtn" class="composer-btn" title="Send"><i class="fas fa-paper-plane"></i></button>
       </div>
       <div class="composer-hint"><kbd>**bold**</kbd> <kbd>*italic*</kbd> <kbd>`code`</kbd> <kbd>@name</kbd> · <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for a new line</div>
