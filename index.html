@@ -949,10 +949,19 @@ async function login(username, password) {
   };
 
   sessionStorage.setItem("kikochat_user", JSON.stringify(user));
-  initChatUI(user);
-}
-}
 
+  elements.loginView.style.display = "none";
+  elements.mainView.style.display = "grid";
+  elements.meName.textContent = user.name;
+  elements.meRole.textContent = "Membro";
+  elements.meAvatar.textContent = initials(user.name);
+  elements.meAvatar.style.background = colorFromName(user.name);
+
+  buildEmojiPicker();
+
+  setTimeout(() => elements.textInput?.focus(), 150);
+}
+  
 function logout() {
   sessionStorage.clear();
   location.reload();
