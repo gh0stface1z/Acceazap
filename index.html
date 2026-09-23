@@ -952,6 +952,59 @@ function renderReactionsInto(key, col) {
   if (Object.keys(reactionGroups).length > 0) col.appendChild(reactionsContainer);
 }
 
+// GIPHY picker (interface local; API será conectada na próxima etapa)
+let gifSearchTimer = null;
+
+function closeGifPicker() {
+  const picker = document.getElementById('gifPicker');
+  if (!picker) return;
+  picker.classList.remove('show');
+  picker.setAttribute('aria-hidden', 'true');
+}
+
+function openGifPicker() {
+  const picker = document.getElementById('gifPicker');
+  if (!picker) return;
+  const emojiPicker = document.getElementById('emojiPicker');
+  if (emojiPicker) emojiPicker.classList.remove('show');
+  picker.classList.toggle('show');
+  picker.setAttribute('aria-hidden', picker.classList.contains('show') ? 'false' : 'true');
+  if (picker.classList.contains('show')) {
+    setTimeout(() => document.getElementById('gifSearchInput')?.focus(), 30);
+  }
+}
+
+function showGifPlaceholder() {
+  const results = document.getElementById('gifResults');
+  if (!results) return;
+  results.innerHTML = '<div class="gif-empty"><i class="fas fa-film"></i><span>Digite algo para pesquisar GIFs</span></div>';
+}
+
+function searchGiphyLocal(query) {
+  const results = document.getElementById('gifResults');
+  if (!results) return;
+  const q = query.trim();
+  if (!q) { showGifPlaceholder(); return; }
+  results.innerHTML = '<div class="gif-empty"><i class="fas fa-spinner fa-spin"></i><span>Preparando a busca do GIPHY…</span></div>';
+}
+
+function bindGifPicker() {
+  elements.gifBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openGifPicker();
+  });
+  document.getElementById('gifCloseBtn')?.addEventListener('click', closeGifPicker);
+  const input = document.getElementById('gifSearchInput');
+  input?.addEventListener('input', (e) => {
+    clearTimeout(gifSearchTimer);
+    gifSearchTimer = setTimeout(() => searchGiphyLocal(e.target.value), 250);
+  });
+  document.addEventListener('click', (e) => {
+    const picker = document.getElementById('gifPicker');
+    if (picker?.classList.contains('show') && !picker.contains(e.target) && e.target !== elements.gifBtn) closeGifPicker();
+  });
+}
+
 // Emoji picker
 function buildEmojiPicker() {
   const picker = document.getElementById('emojiPicker');
@@ -1324,6 +1377,7 @@ async function initChatUI(user) {
 
   updateUsersUI();
   buildEmojiPicker();
+  bindGifPicker();
 
   setTimeout(() => elements.textInput?.focus(), 150);
 }
@@ -1349,6 +1403,7 @@ window.addEventListener("load", async () => {
     textInput: document.getElementById("textInput"),
     sendBtn: document.getElementById("sendBtn"),
     attachBtn: document.getElementById("attachBtn"),
+    gifBtn: document.getElementById("gifBtn"),
     fileInput: document.getElementById("fileInput"),
     composer: document.getElementById("composer"),
     newUsername: document.getElementById("newUsername"),
@@ -2122,6 +2177,21 @@ mark {
 }
 #textInput::placeholder { color: var(--text-tertiary); }
 
+.gif-btn {
+  width: 36px;
+  height: 36px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--accent-soft);
+  border: 1px solid var(--border-soft);
+}
+.gif-btn:hover {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 #sendBtn {
   width: 38px; height: 38px; border: none; background: var(--bg-elevated);
   color: var(--text-tertiary); border-radius: 50%;
@@ -2135,6 +2205,41 @@ mark {
 .composer-hint { margin-top: 8px; font-size: 11px; color: var(--text-tertiary); text-align: center; }
 .composer-hint kbd { font-family: var(--font-mono); background: var(--bg-tertiary); border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px; font-size: 10px; }
 
+
+/* GIF picker */
+.gif-picker {
+  position: fixed;
+  right: 22px;
+  bottom: 88px;
+  z-index: 100000;
+  width: min(390px, calc(100vw - 28px));
+  height: min(480px, calc(100vh - 130px));
+  display: none;
+  flex-direction: column;
+  padding: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 18px;
+  box-shadow: 0 18px 55px rgba(0,0,0,.4);
+}
+.gif-picker.show { display: flex; }
+.gif-picker-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.gif-picker-title { display:flex; align-items:baseline; gap:7px; }
+.gif-picker-title strong { font-size:15px; }
+.gif-picker-title span { font-size:9px; font-weight:800; color:var(--accent-soft); letter-spacing:.08em; }
+.gif-close { width:30px; height:30px; border:0; border-radius:50%; background:transparent; color:var(--text-tertiary); cursor:pointer; }
+.gif-close:hover { background:var(--bg-tertiary); color:var(--text-primary); }
+.gif-search-row { display:flex; align-items:center; gap:8px; padding:9px 11px; background:var(--bg-tertiary); border:1px solid var(--border-soft); border-radius:12px; }
+.gif-search-row i { color:var(--text-tertiary); font-size:12px; }
+#gifSearchInput { flex:1; border:0; outline:0; background:transparent; color:var(--text-primary); font:13px var(--font-body); }
+#gifSearchInput::placeholder { color:var(--text-tertiary); }
+.gif-results { flex:1; min-height:0; overflow:auto; margin-top:10px; display:grid; grid-template-columns:repeat(2,1fr); gap:7px; align-content:start; }
+.gif-empty { grid-column:1/-1; min-height:180px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px; color:var(--text-tertiary); font-size:12.5px; text-align:center; }
+.gif-empty i { font-size:24px; color:var(--accent-soft); opacity:.8; }
+.gif-branding { font-size:9px; color:var(--text-tertiary); text-align:right; padding-top:7px; opacity:.7; }
+@media (max-width:768px) {
+  .gif-picker { right:14px; bottom:76px; width:calc(100vw - 28px); height:min(440px,calc(100vh - 110px)); }
+}
 
 /* Delete menu */
 .delete-action:hover {
@@ -2382,7 +2487,8 @@ mark {
       </div>
 
       <div class="composer" id="composer">
-        <button id="attachBtn" class="composer-btn" title="Attach a photo or video"><i class="fas fa-paperclip"></i></button>
+        <button id="attachBtn" class="composer-btn" title="Anexar foto ou vídeo"><i class="fas fa-paperclip"></i></button>
+        <button id="gifBtn" class="composer-btn gif-btn" title="GIF">GIF</button>
         <input type="file" id="fileInput" accept="image/*,video/*" hidden />
         <textarea id="textInput" placeholder="Digite uma mensagem…" rows="1"></textarea>
         <button id="sendBtn" class="composer-btn" title="Send"><i class="fas fa-paper-plane"></i></button>
@@ -2390,6 +2496,22 @@ mark {
       <div class="composer-hint"><kbd>**bold**</kbd> <kbd>*italic*</kbd> <kbd>`code`</kbd> <kbd>@name</kbd> · <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for a new line</div>
     </div>
   </div>
+</div>
+
+<!-- GIF Picker -->
+<div id="gifPicker" class="gif-picker" aria-hidden="true">
+  <div class="gif-picker-header">
+    <div class="gif-picker-title"><strong>GIF</strong><span>GIPHY</span></div>
+    <button id="gifCloseBtn" class="gif-close" aria-label="Fechar GIFs"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div class="gif-search-row">
+    <i class="fas fa-magnifying-glass"></i>
+    <input id="gifSearchInput" type="search" placeholder="Pesquisar GIFs…" autocomplete="off" />
+  </div>
+  <div id="gifResults" class="gif-results">
+    <div class="gif-empty"><i class="fas fa-film"></i><span>Pesquise um GIF</span></div>
+  </div>
+  <div class="gif-branding">Powered by GIPHY</div>
 </div>
 
 <!-- Emoji Picker -->
