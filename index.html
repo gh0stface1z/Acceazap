@@ -2387,3 +2387,127 @@ mark {
 
 </body>
 </html>
+
+<style id="accea-avatar-delete-final-fix">
+/* CORREÇÃO FINAL DOS AVATARES: nunca podem crescer além da bolinha */
+#meAvatar,
+.user-avatar,
+.msg-avatar {
+  width: 40px !important;
+  height: 40px !important;
+  min-width: 40px !important;
+  min-height: 40px !important;
+  max-width: 40px !important;
+  max-height: 40px !important;
+  border-radius: 50% !important;
+  overflow: hidden !important;
+  position: relative !important;
+  flex: 0 0 40px !important;
+  box-sizing: border-box !important;
+}
+#meAvatar { width:38px !important; height:38px !important; min-width:38px !important; min-height:38px !important; max-width:38px !important; max-height:38px !important; flex-basis:38px !important; }
+.msg-avatar {
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+  max-width: 26px !important;
+  max-height: 26px !important;
+  flex-basis: 26px !important;
+}
+#meAvatar > img.avatar-photo,
+.user-avatar > img.avatar-photo,
+.msg-avatar > img.avatar-photo {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 100% !important;
+  min-height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: cover !important;
+  object-position: center !important;
+  border-radius: 50% !important;
+  position: absolute !important;
+  inset: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  pointer-events: none !important;
+}
+/* A foto nunca pode capturar o clique dos botões da mensagem. */
+.msg-avatar { pointer-events: none !important; }
+
+/* Avatares ficam exatamente ao lado da bolha, como no WhatsApp. */
+.message-wrapper.me { flex-direction: row !important; }
+.message-wrapper.me .message-col { order: 1 !important; }
+.message-wrapper.me .msg-avatar { order: 2 !important; margin-left: 2px !important; margin-right: 0 !important; }
+.message-wrapper.other .message-col { order: 2 !important; }
+.message-wrapper.other .msg-avatar { order: 1 !important; margin-right: 2px !important; margin-left: 0 !important; }
+
+/* Não deixar o menu de ações desaparecer enquanto estamos testando no desktop. */
+.message-actions {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  transform: translateY(0) !important;
+  z-index: 50 !important;
+}
+.message-actions .action-button {
+  pointer-events: auto !important;
+  position: relative !important;
+  z-index: 51 !important;
+}
+.delete-action::after,
+.delete-action::before { display: none !important; }
+
+/* Menu de apagar sempre acima de absolutamente tudo. */
+.delete-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 999999 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 20px !important;
+  box-sizing: border-box !important;
+  background: rgba(0,0,0,.55) !important;
+}
+.delete-menu {
+  position: relative !important;
+  z-index: 1000000 !important;
+  width: min(340px, calc(100vw - 40px)) !important;
+  max-height: calc(100vh - 40px) !important;
+  overflow: auto !important;
+  box-sizing: border-box !important;
+}
+</style>
+
+<script>
+/* Reforço final: se algum avatar antigo tiver dimensões erradas, normaliza ao carregar. */
+(function enforceAvatarSizes(){
+  const fix = () => {
+    document.querySelectorAll('#meAvatar, .user-avatar, .msg-avatar').forEach(el => {
+      const isMsg = el.classList.contains('msg-avatar');
+      const size = isMsg ? 26 : (el.id === 'meAvatar' ? 38 : 40);
+      el.style.setProperty('width', size + 'px', 'important');
+      el.style.setProperty('height', size + 'px', 'important');
+      el.style.setProperty('min-width', size + 'px', 'important');
+      el.style.setProperty('min-height', size + 'px', 'important');
+      el.style.setProperty('max-width', size + 'px', 'important');
+      el.style.setProperty('max-height', size + 'px', 'important');
+      el.style.setProperty('overflow', 'hidden', 'important');
+      const img = el.querySelector(':scope > img.avatar-photo');
+      if (img) {
+        img.style.setProperty('width','100%','important');
+        img.style.setProperty('height','100%','important');
+        img.style.setProperty('max-width','100%','important');
+        img.style.setProperty('max-height','100%','important');
+        img.style.setProperty('object-fit','cover','important');
+        img.style.setProperty('position','absolute','important');
+        img.style.setProperty('inset','0','important');
+      }
+    });
+  };
+  fix();
+  new MutationObserver(fix).observe(document.body, {childList:true, subtree:true});
+})();
+</script>
