@@ -236,20 +236,53 @@ function applyAvatarElement(el, username, photo = '') {
   if (!el) return;
 
   const src = photo || getProfilePhoto(username);
+  const existingImg = el.querySelector('.avatar-photo');
 
   if (src) {
-    el.textContent = '';
-    el.style.backgroundImage = `url("${src}")`;
-    el.style.backgroundSize = 'cover';
-    el.style.backgroundPosition = 'center';
+    if (existingImg) {
+      existingImg.src = src;
+    } else {
+      const img = document.createElement('img');
+      img.className = 'avatar-photo';
+      img.src = src;
+      img.alt = `Foto de ${username || 'usuário'}`;
+      img.draggable = false;
+      el.appendChild(img);
+    }
+    el.classList.add('has-profile-photo');
+    el.style.backgroundImage = '';
+    el.style.background = 'var(--bg-tertiary)';
+    return;
+  }
+
+  if (existingImg) existingImg.remove();
+  el.classList.remove('has-profile-photo');
+  el.style.backgroundImage = '';
+  el.style.background = colorFromName(username);
+
+  const statusIndicator = el.querySelector('.status-indicator');
+  el.textContent = initials(username);
+  if (statusIndicator) el.appendChild(statusIndicator);
+}
+
+function applyMessageAvatar(el, username, photo = '') {
+  if (!el) return;
+  const src = photo || getProfilePhoto(username);
+  el.classList.add('msg-avatar');
+  el.innerHTML = '';
+  el.style.background = colorFromName(username);
+
+  if (src) {
+    const img = document.createElement('img');
+    img.className = 'avatar-photo';
+    img.src = src;
+    img.alt = `Foto de ${username || 'usuário'}`;
+    img.draggable = false;
+    el.appendChild(img);
     el.classList.add('has-profile-photo');
   } else {
-    el.style.backgroundImage = '';
-    el.style.backgroundSize = '';
-    el.style.backgroundPosition = '';
     el.classList.remove('has-profile-photo');
     el.textContent = initials(username);
-    el.style.background = colorFromName(username);
   }
 }
 
@@ -276,7 +309,7 @@ function refreshProfilePhotoUI(username) {
   document.querySelectorAll('.message-wrapper').forEach(wrapper => {
     if (wrapper.dataset.author !== username) return;
     const avatar = wrapper.querySelector('.msg-avatar');
-    applyAvatarElement(avatar, username, photo);
+    applyMessageAvatar(avatar, username, photo);
   });
 }
 
@@ -648,8 +681,7 @@ function renderMessage(key, msg) {
   {
     const avatar = document.createElement("div");
     avatar.className = "msg-avatar";
-    avatar.style.background = colorFromName(msg.name);
-    applyAvatarElement(avatar, msg.name, state.userMap[msg.name]?.profile?.avatarUrl || getProfilePhoto(msg.name));
+    applyMessageAvatar(avatar, msg.name, state.userMap[msg.name]?.profile?.avatarUrl || getProfilePhoto(msg.name));
     wrapper.appendChild(avatar);
   }
 
@@ -796,28 +828,41 @@ function renderMessage(key, msg) {
 
 
 // Delete message functionality
+function closeDeleteMenu() {
+  const overlay = document.getElementById('deleteOverlay');
+  if (overlay) overlay.remove();
+}
+
 function openDeleteMenu(key, msg) {
-  const existing = document.getElementById('deleteMenu');
-  if (existing) existing.remove();
+  closeDeleteMenu();
 
   const isMe = msg.name === state.currentUser?.name;
 
+  const overlay = document.createElement('div');
+  overlay.id = 'deleteOverlay';
+  overlay.className = 'delete-overlay';
+
   const menu = document.createElement('div');
-  menu.id = 'deleteMenu';
   menu.className = 'delete-menu';
-  menu.style.visibility = 'hidden';
+  menu.setAttribute('role', 'dialog');
+  menu.setAttribute('aria-modal', 'true');
 
   const title = document.createElement('div');
   title.className = 'delete-menu-title';
   title.textContent = 'Apagar mensagem';
   menu.appendChild(title);
 
+  const subtitle = document.createElement('div');
+  subtitle.className = 'delete-menu-subtitle';
+  subtitle.textContent = isMe ? 'Escolha onde remover esta mensagem.' : 'Esta mensagem será removida só para você.';
+  menu.appendChild(subtitle);
+
   const deleteForMe = document.createElement('button');
   deleteForMe.className = 'delete-menu-option';
   deleteForMe.innerHTML = '<i class="far fa-trash-can"></i><span>Apagar para mim</span>';
   deleteForMe.onclick = () => {
     deleteForMeOnly(key);
-    menu.remove();
+    closeDeleteMenu();
   };
   menu.appendChild(deleteForMe);
 
@@ -827,7 +872,7 @@ function openDeleteMenu(key, msg) {
     deleteForEveryone.innerHTML = '<i class="fas fa-trash-can"></i><span>Apagar para todos</span>';
     deleteForEveryone.onclick = () => {
       if (confirm('Apagar esta mensagem para todos?')) deleteForEveryoneLocal(key);
-      menu.remove();
+      closeDeleteMenu();
     };
     menu.appendChild(deleteForEveryone);
   }
@@ -835,56 +880,17 @@ function openDeleteMenu(key, msg) {
   const cancel = document.createElement('button');
   cancel.className = 'delete-menu-cancel';
   cancel.textContent = 'Cancelar';
-  cancel.onclick = () => menu.remove();
+  cancel.onclick = closeDeleteMenu;
   menu.appendChild(cancel);
 
-  document.body.appendChild(menu);
+  overlay.appendChild(menu);
+  document.body.appendChild(overlay);
 
-  const messageEl = document.querySelector(`[data-message-id="${key}"]`);
-  const deleteButton = messageEl?.querySelector('.delete-action');
-  const anchorRect = deleteButton?.getBoundingClientRect() || messageEl?.getBoundingClientRect();
-  if (anchorRect) {
-    requestAnimationFrame(() => {
-      const gap = 10;
-      const margin = 12;
-      const menuWidth = Math.min(menu.offsetWidth || 228, window.innerWidth - margin * 2);
-      const menuHeight = menu.offsetHeight || 160;
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) closeDeleteMenu();
+  });
 
-      // Posiciona o menu perto do botão e mantém tudo dentro da tela.
-      let left = anchorRect.left;
-      if (left + menuWidth > window.innerWidth - margin) {
-        left = window.innerWidth - menuWidth - margin;
-      }
-      if (left < margin) left = margin;
-
-      let top = anchorRect.bottom + gap;
-      if (top + menuHeight > window.innerHeight - margin) {
-        top = anchorRect.top - menuHeight - gap;
-      }
-      if (top < margin) top = margin;
-
-      menu.style.left = `${Math.round(left)}px`;
-      menu.style.top = `${Math.round(top)}px`;
-      menu.style.visibility = 'visible';
-    });
-  }
-
-  if (!anchorRect) {
-    menu.style.left = '50%';
-    menu.style.top = '50%';
-    menu.style.transform = 'translate(-50%, -50%)';
-    menu.style.visibility = 'visible';
-  }
-
-  setTimeout(() => {
-    const closeMenu = (event) => {
-      if (!menu.contains(event.target)) {
-        menu.remove();
-        document.removeEventListener('click', closeMenu);
-      }
-    };
-    document.addEventListener('click', closeMenu);
-  }, 0);
+  menu.querySelector('button')?.focus();
 }
 
 function deleteForMeOnly(key) {
@@ -1907,6 +1913,8 @@ mark {
   visibility: visible;
 }
 .message-wrapper.grouped .msg-avatar { visibility: visible; }
+.msg-avatar { overflow: hidden; }
+.msg-avatar .avatar-photo { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: 50%; }
 
 .message-col { display: flex; flex-direction: column; min-width: 0; }
 .message-wrapper.me .message-col { align-items: flex-end; }
@@ -2058,28 +2066,43 @@ mark {
   background: rgba(248, 113, 113, 0.12);
 }
 
-.delete-menu {
+.delete-overlay {
   position: fixed;
-  z-index: 99999;
-  visibility: hidden;
-  width: min(228px, calc(100vw - 24px));
+  inset: 0;
+  z-index: 999999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.delete-menu {
+  width: min(320px, calc(100vw - 36px));
   box-sizing: border-box;
-  padding: 8px;
+  padding: 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-soft);
-  border-radius: 14px;
-  box-shadow: var(--shadow-lg);
-  max-height: calc(100vh - 24px);
+  border-radius: 16px;
+  box-shadow: 0 18px 55px rgba(0,0,0,.35);
+  max-height: calc(100vh - 36px);
   overflow: auto;
 }
 
 .delete-menu-title {
-  padding: 8px 10px 6px;
-  font-size: 11px;
+  padding: 6px 10px 3px;
+  font-size: 15px;
   font-weight: 700;
+  color: var(--text-primary);
+}
+
+.delete-menu-subtitle {
+  padding: 0 10px 10px;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .delete-menu-option,
@@ -2089,8 +2112,8 @@ mark {
   align-items: center;
   gap: 10px;
   border: none;
-  border-radius: 9px;
-  padding: 10px;
+  border-radius: 10px;
+  padding: 12px;
   background: transparent;
   color: var(--text-primary);
   font-family: var(--font-body);
@@ -2102,6 +2125,12 @@ mark {
 .delete-menu-option:hover,
 .delete-menu-cancel:hover {
   background: var(--bg-tertiary);
+}
+
+.delete-menu-option:focus-visible,
+.delete-menu-cancel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .delete-menu-option i {
@@ -2119,101 +2148,11 @@ mark {
 }
 
 .delete-menu-cancel {
-  margin-top: 3px;
+  margin-top: 5px;
   justify-content: center;
   color: var(--text-tertiary);
   border-top: 1px solid var(--border-soft);
   border-radius: 0 0 9px 9px;
-}
-
-@media (max-width: 600px) {
-  .delete-menu {
-    width: min(260px, calc(100vw - 20px));
-    padding: 7px;
-  }
-  .delete-menu-option, .delete-menu-cancel {
-    min-height: 42px;
-    font-size: 14px;
-  }
-}
-
-.deleted-message {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-tertiary);
-  font-size: 13px;
-  font-style: italic;
-}
-
-.deleted-message i {
-  font-size: 12px;
-  opacity: 0.8;
-}
-
-/* Emoji Picker */
-#emojiPicker {
-  position: fixed; background: var(--bg-elevated); border: 1px solid var(--border-soft);
-  border-radius: 16px; padding: 8px; box-shadow: var(--shadow-lg);
-  display: flex; gap: 3px; opacity: 0; pointer-events: none;
-  transform: translateY(6px) scale(0.96); transition: var(--transition); z-index: 1000;
-}
-#emojiPicker.show { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
-
-.emoji-option {
-  width: 32px; height: 32px; border: none; background: transparent; font-size: 16px;
-  border-radius: 8px; cursor: pointer; transition: var(--transition);
-  display: flex; align-items: center; justify-content: center;
-}
-.emoji-option:hover { background: var(--bg-tertiary); transform: scale(1.18); }
-
-/* Modals */
-.modal {
-  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-  background: rgba(10, 8, 18, 0.86); backdrop-filter: blur(4px);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 2000; opacity: 0; pointer-events: none; transition: var(--transition);
-}
-.modal.show { opacity: 1; pointer-events: auto; }
-
-.modal-content {
-  background: var(--bg-elevated); border: 1px solid var(--border-soft);
-  border-radius: var(--radius-lg); padding: 20px; max-width: 90vw; max-height: 90vh;
-  position: relative; box-shadow: var(--shadow-lg);
-}
-
-.modal-close {
-  position: absolute; top: -14px; right: -14px; width: 32px; height: 32px;
-  border: 1px solid var(--border-soft); background: var(--bg-elevated); color: var(--text-secondary);
-  font-size: 15px; cursor: pointer; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center; transition: var(--transition);
-}
-.modal-close:hover { background: var(--error); color: #fff; border-color: var(--error); }
-
-.media-content { display: flex; align-items: center; justify-content: center; max-width: 80vw; max-height: 80vh; }
-.media-content img, .media-content video { max-width: 100%; max-height: 80vh; border-radius: 8px; }
-
-/* Notifications */
-.notification {
-  position: fixed; top: 20px; right: 20px; padding: 13px 18px 13px 15px;
-  background: var(--bg-elevated); border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm); color: var(--text-primary);
-  box-shadow: var(--shadow-lg); z-index: 3000; opacity: 0;
-  transform: translateX(20px); transition: var(--transition);
-  max-width: 320px; display: flex; align-items: center; gap: 10px; font-size: 13.5px;
-}
-.notification.show { opacity: 1; transform: translateX(0); }
-.notification i { font-size: 15px; }
-.notification.success { border-left: 3px solid var(--success); } .notification.success i { color: var(--success); }
-.notification.error { border-left: 3px solid var(--error); } .notification.error i { color: var(--error); }
-.notification.warning { border-left: 3px solid var(--warning); } .notification.warning i { color: var(--warning); }
-.notification.info { border-left: 3px solid var(--accent); } .notification.info i { color: var(--accent-soft); }
-
-/* Search result badge */
-#searchResultCount {
-  position: absolute; right: 8px; top: 50%; transform: translateY(-50%) translateY(24px);
-  font-size: 10.5px; color: var(--text-tertiary); opacity: 0; transition: var(--transition);
-  background: var(--bg-elevated); padding: 2px 7px; border-radius: 10px; pointer-events: none;
 }
 
 /* Responsive */
