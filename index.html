@@ -755,8 +755,9 @@ function renderMessage(key, msg) {
 
   const deleteButton = document.createElement("button");
   deleteButton.className = "action-button delete-action";
-  deleteButton.setAttribute("aria-label", "Apagar");
-  deleteButton.setAttribute("data-tooltip", "Apagar");
+  deleteButton.setAttribute("aria-label", "Apagar mensagem");
+  deleteButton.removeAttribute("title");
+  deleteButton.removeAttribute("data-tooltip");
   deleteButton.innerHTML = '<i class="far fa-trash-can"></i>';
   deleteButton.onclick = (e) => {
     e.stopPropagation();
@@ -804,6 +805,7 @@ function openDeleteMenu(key, msg) {
   const menu = document.createElement('div');
   menu.id = 'deleteMenu';
   menu.className = 'delete-menu';
+  menu.style.visibility = 'hidden';
 
   const title = document.createElement('div');
   title.className = 'delete-menu-title';
@@ -839,28 +841,39 @@ function openDeleteMenu(key, msg) {
   document.body.appendChild(menu);
 
   const messageEl = document.querySelector(`[data-message-id="${key}"]`);
-  const rect = messageEl?.getBoundingClientRect();
-  if (rect) {
+  const deleteButton = messageEl?.querySelector('.delete-action');
+  const anchorRect = deleteButton?.getBoundingClientRect() || messageEl?.getBoundingClientRect();
+  if (anchorRect) {
     requestAnimationFrame(() => {
-      const gap = 8;
+      const gap = 10;
       const margin = 12;
-      const menuWidth = menu.offsetWidth;
-      const menuHeight = menu.offsetHeight;
+      const menuWidth = Math.min(menu.offsetWidth || 228, window.innerWidth - margin * 2);
+      const menuHeight = menu.offsetHeight || 160;
 
-      // Abre o menu alinhado ao lado da mensagem, mas nunca deixa
-      // o menu passar da tela. Se não couber embaixo, ele sobe.
-      let left = rect.right - menuWidth;
-      left = Math.max(margin, Math.min(left, window.innerWidth - menuWidth - margin));
-
-      let top = rect.bottom + gap;
-      if (top + menuHeight > window.innerHeight - margin) {
-        top = rect.top - menuHeight - gap;
+      // Posiciona o menu perto do botão e mantém tudo dentro da tela.
+      let left = anchorRect.left;
+      if (left + menuWidth > window.innerWidth - margin) {
+        left = window.innerWidth - menuWidth - margin;
       }
-      top = Math.max(margin, Math.min(top, window.innerHeight - menuHeight - margin));
+      if (left < margin) left = margin;
 
-      menu.style.left = `${left}px`;
-      menu.style.top = `${top}px`;
+      let top = anchorRect.bottom + gap;
+      if (top + menuHeight > window.innerHeight - margin) {
+        top = anchorRect.top - menuHeight - gap;
+      }
+      if (top < margin) top = margin;
+
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+      menu.style.visibility = 'visible';
     });
+  }
+
+  if (!anchorRect) {
+    menu.style.left = '50%';
+    menu.style.top = '50%';
+    menu.style.transform = 'translate(-50%, -50%)';
+    menu.style.visibility = 'visible';
   }
 
   setTimeout(() => {
@@ -1869,19 +1882,26 @@ mark {
 
 /* Message groups */
 .message-wrapper {
-  display: flex; align-items: flex-end; gap: 8px;
+  display: flex; align-items: flex-end; gap: 5px;
   max-width: 74%; opacity: 0; transform: translateY(10px);
   transition: opacity 0.35s ease, transform 0.35s ease;
   margin-top: 12px;
 }
 .message-wrapper.grouped { margin-top: 2px; }
 .message-wrapper.message-entered { opacity: 1; transform: translateY(0); }
-.message-wrapper.me { align-self: flex-end; flex-direction: row-reverse; }
+.message-wrapper.me { align-self: flex-end; flex-direction: row; }
 .message-wrapper.other { align-self: flex-start; }
 .message-wrapper.search-hidden { display: none; }
 
+.message-wrapper.me { justify-content: flex-end; }
+.message-wrapper.other { justify-content: flex-start; }
+.message-wrapper.me .msg-avatar { order: 2; }
+.message-wrapper.other .msg-avatar { order: 1; }
+.message-wrapper.me .message-col { order: 1; }
+.message-wrapper.other .message-col { order: 2; }
+
 .msg-avatar {
-  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  width: 24px; height: 24px; border-radius: 50%; flex: 0 0 24px;
   display: flex; align-items: center; justify-content: center;
   font-size: 11.5px; font-weight: 700; color: #fff;
   visibility: visible;
@@ -2040,7 +2060,8 @@ mark {
 
 .delete-menu {
   position: fixed;
-  z-index: 4000;
+  z-index: 99999;
+  visibility: hidden;
   width: min(228px, calc(100vw - 24px));
   box-sizing: border-box;
   padding: 8px;
