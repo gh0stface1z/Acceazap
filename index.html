@@ -331,6 +331,7 @@ function selectUser(username) {
 }
 
 // Message handling
+// Message handling
 async function sendTextMessage(text) {
   if (!state.currentUser || !text.trim()) return;
 
@@ -338,7 +339,7 @@ async function sendTextMessage(text) {
     type: "text",
     name: state.currentUser.name,
     text: text.trim(),
-    ts: serverTimestamp(),
+    ts: Date.now(),
     deliveredBy: { [state.currentUser.name]: true },
     seenBy: {},
     id: generateId()
@@ -352,16 +353,16 @@ async function sendTextMessage(text) {
     };
   }
 
-  try {
-    await push(roomRef, messageData);
-    elements.textInput.value = '';
-    elements.textInput.style.height = 'auto';
-    updateComposerState();
-    clearReply();
-    await stopTyping();
-  } catch (error) {
-    showNotification('Message did not send. Try again.', 'error');
-  }
+  state.messages[messageData.id] = messageData;
+  state.messageOrder.push(messageData.id);
+
+  renderMessages();
+
+  elements.textInput.value = '';
+  elements.textInput.style.height = 'auto';
+  updateComposerState();
+  clearReply();
+  stopTyping();
 }
 
 async function uploadAndSendFile(file) {
@@ -391,12 +392,17 @@ async function uploadAndSendFile(file) {
         data: e.target.result,
         filename: file.name,
         fileSize: file.size,
-        ts: serverTimestamp(),
+        ts: Date.now(),
         deliveredBy: { [state.currentUser.name]: true },
         seenBy: {},
         id: generateId()
       };
-      await push(roomRef, messageData);
+
+      state.messages[messageData.id] = messageData;
+      state.messageOrder.push(messageData.id);
+
+      renderMessages();
+
     } catch (error) {
       showNotification('Upload failed. Try again.', 'error');
     } finally {
@@ -409,6 +415,7 @@ async function uploadAndSendFile(file) {
 
 function showLoadingState(show) {
   const button = elements.sendBtn;
+
   if (show) {
     button.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
     button.disabled = true;
