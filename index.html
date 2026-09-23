@@ -221,6 +221,108 @@ function updateTypingIndicator() {
   }
 }
 
+
+// Profile photo (local stage)
+function profileStorageKey(username) {
+  return `accea-profile-photo-${mkKey(username)}`;
+}
+
+function getProfilePhoto(username) {
+  if (!username) return '';
+  return localStorage.getItem(profileStorageKey(username)) || '';
+}
+
+function applyAvatarElement(el, username, photo = '') {
+  if (!el) return;
+
+  const src = photo || getProfilePhoto(username);
+
+  if (src) {
+    el.textContent = '';
+    el.style.backgroundImage = `url("${src}")`;
+    el.style.backgroundSize = 'cover';
+    el.style.backgroundPosition = 'center';
+    el.classList.add('has-profile-photo');
+  } else {
+    el.style.backgroundImage = '';
+    el.style.backgroundSize = '';
+    el.style.backgroundPosition = '';
+    el.classList.remove('has-profile-photo');
+    el.textContent = initials(username);
+    el.style.background = colorFromName(username);
+  }
+}
+
+function refreshProfilePhotoUI(username) {
+  const photo = getProfilePhoto(username);
+
+  if (state.userMap[username]) {
+    state.userMap[username].profile = {
+      ...(state.userMap[username].profile || {}),
+      avatarUrl: photo
+    };
+  }
+
+  if (state.currentUser?.name === username) {
+    applyAvatarElement(elements.meAvatar, username, photo);
+  }
+
+  document.querySelectorAll('.user-item').forEach(row => {
+    if (row.dataset.username !== username) return;
+    const avatar = row.querySelector('.user-avatar');
+    applyAvatarElement(avatar, username, photo);
+  });
+
+  document.querySelectorAll('.message-wrapper').forEach(wrapper => {
+    if (wrapper.dataset.author !== username) return;
+    const avatar = wrapper.querySelector('.msg-avatar');
+    applyAvatarElement(avatar, username, photo);
+  });
+}
+
+function handleProfilePhoto(file) {
+  if (!state.currentUser || !file) return;
+
+  if (!file.type.startsWith('image/')) {
+    showNotification('Escolha uma imagem para a foto de perfil.', 'error');
+    return;
+  }
+
+  if (file.size > 5 * 1024 * 1024) {
+    showNotification('A foto de perfil deve ter no máximo 5MB.', 'warning');
+    return;
+  }
+
+  const reader = new FileReader();
+
+  reader.onload = () => {
+    const src = reader.result;
+
+    try {
+      localStorage.setItem(profileStorageKey(state.currentUser.name), src);
+      refreshProfilePhotoUI(state.currentUser.name);
+      showNotification('Foto de perfil atualizada.', 'success');
+    } catch (error) {
+      showNotification('Não foi possível salvar essa foto. Tente uma imagem menor.', 'error');
+    }
+  };
+
+  reader.onerror = () => {
+    showNotification('Não foi possível carregar a foto.', 'error');
+  };
+
+  reader.readAsDataURL(file);
+}
+
+function removeProfilePhoto() {
+  if (!state.currentUser) return;
+
+  const key = profileStorageKey(state.currentUser.name);
+  localStorage.removeItem(key);
+  refreshProfilePhotoUI(state.currentUser.name);
+  showNotification('Foto de perfil removida.', 'success');
+}
+
 // User management
 async function createUser(username, pass, role = "user") {
   const key = mkKey(username);
@@ -287,7 +389,7 @@ function updateUsersUI() {
     const avatar = document.createElement("div");
     avatar.className = "user-avatar";
     avatar.style.background = info.profile?.avatarColor || colorFromName(username);
-    avatar.textContent = initials(username);
+    applyAvatarElement(avatar, username, info.profile?.avatarUrl || getProfilePhoto(username));
 
     const indicator = document.createElement("div");
     indicator.className = `status-indicator ${info.status?.online ? 'online' : 'offline'}`;
@@ -547,7 +649,7 @@ function renderMessage(key, msg) {
     const avatar = document.createElement("div");
     avatar.className = "msg-avatar";
     avatar.style.background = colorFromName(msg.name);
-    avatar.textContent = initials(msg.name);
+    applyAvatarElement(avatar, msg.name, state.userMap[msg.name]?.profile?.avatarUrl || getProfilePhoto(msg.name));
     wrapper.appendChild(avatar);
   }
 
@@ -653,7 +755,7 @@ function renderMessage(key, msg) {
 
   const deleteButton = document.createElement("button");
   deleteButton.className = "action-button delete-action";
-  deleteButton.title = "Apagar mensagem";
+  deleteButton.setAttribute("aria-label", "Apagar mensagem");
   deleteButton.innerHTML = '<i class="far fa-trash-can"></i>';
   deleteButton.onclick = (e) => {
     e.stopPropagation();
@@ -739,8 +841,24 @@ function openDeleteMenu(key, msg) {
   const rect = messageEl?.getBoundingClientRect();
   if (rect) {
     requestAnimationFrame(() => {
-      menu.style.top = `${Math.max(12, Math.min(rect.bottom + 8, window.innerHeight - menu.offsetHeight - 12))}px`;
-      menu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 12))}px`;
+      const gap = 8;
+      const margin = 12;
+      const menuWidth = menu.offsetWidth;
+      const menuHeight = menu.offsetHeight;
+
+      // Abre o menu alinhado ao lado da mensagem, mas nunca deixa
+      // o menu passar da tela. Se não couber embaixo, ele sobe.
+      let left = rect.right - menuWidth;
+      left = Math.max(margin, Math.min(left, window.innerWidth - menuWidth - margin));
+
+      let top = rect.bottom + gap;
+      if (top + menuHeight > window.innerHeight - margin) {
+        top = rect.top - menuHeight - gap;
+      }
+      top = Math.max(margin, Math.min(top, window.innerHeight - menuHeight - margin));
+
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
     });
   }
 
@@ -975,6 +1093,16 @@ function bindEvents() {
 
   elements.logoutBtn?.addEventListener('click', logout);
 
+  elements.meAvatarWrap?.addEventListener('click', () => {
+    elements.profilePhotoInput?.click();
+  });
+
+  elements.profilePhotoInput?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) handleProfilePhoto(file);
+    e.target.value = '';
+  });
+
   elements.textInput?.addEventListener('input', (e) => {
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
@@ -1090,6 +1218,7 @@ async function login(username, password) {
     role: "user",
     profile: {
       avatarColor: colorFromName(name),
+      avatarUrl: getProfilePhoto(name),
       status: "Disponível"
     },
     status: {
@@ -1117,6 +1246,7 @@ async function initChatUI(user) {
       role: user.role || "user",
       profile: {
         avatarColor: colorFromName(user.name),
+        avatarUrl: getProfilePhoto(user.name),
         status: "Disponível"
       },
       status: {
@@ -1125,6 +1255,10 @@ async function initChatUI(user) {
       }
     };
   } else {
+    state.userMap[user.name].profile = {
+      ...(state.userMap[user.name].profile || {}),
+      avatarUrl: getProfilePhoto(user.name)
+    };
     state.userMap[user.name].status = {
       ...(state.userMap[user.name].status || {}),
       online: true,
@@ -1136,8 +1270,7 @@ async function initChatUI(user) {
   elements.mainView.style.display = "grid";
   elements.meName.textContent = user.name;
   elements.meRole.textContent = user.role === "admin" ? "Admin" : "Membro";
-  elements.meAvatar.textContent = initials(user.name);
-  elements.meAvatar.style.background = colorFromName(user.name);
+  applyAvatarElement(elements.meAvatar, user.name, getProfilePhoto(user.name));
 
   if (user.role === "admin") elements.adminPanel.style.display = "flex";
 
@@ -1159,6 +1292,8 @@ window.addEventListener("load", async () => {
     meName: document.getElementById("meName"),
     meRole: document.getElementById("meRole"),
     meAvatar: document.getElementById("meAvatar"),
+    meAvatarWrap: document.getElementById("meAvatarWrap"),
+    profilePhotoInput: document.getElementById("profilePhotoInput"),
     usernameLogin: document.getElementById("usernameLogin"),
     passLogin: document.getElementById("passLogin"),
     loginButton: document.getElementById("loginButton"),
@@ -1502,6 +1637,43 @@ mark {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   display: flex; align-items: center; gap: 10px;
+}
+
+.me-avatar-wrap {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.me-avatar-wrap:hover .avatar-camera {
+  opacity: 1;
+}
+
+.avatar-camera {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated);
+  border: 2px solid var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 8px;
+  opacity: 0.9;
+  transition: var(--transition);
+  pointer-events: none;
+}
+
+.me-avatar.has-profile-photo,
+.user-avatar.has-profile-photo,
+.msg-avatar.has-profile-photo {
+  background-color: var(--bg-tertiary) !important;
 }
 
 .me-avatar {
@@ -1867,7 +2039,8 @@ mark {
 .delete-menu {
   position: fixed;
   z-index: 4000;
-  width: 228px;
+  width: min(228px, calc(100vw - 24px));
+  box-sizing: border-box;
   padding: 8px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-soft);
@@ -2078,7 +2251,11 @@ mark {
     </div>
 
     <div class="me-card">
-      <div id="meAvatar" class="me-avatar"></div>
+      <div id="meAvatarWrap" class="me-avatar-wrap" title="Alterar foto de perfil">
+        <div id="meAvatar" class="me-avatar"></div>
+        <span class="avatar-camera"><i class="fas fa-camera"></i></span>
+      </div>
+      <input id="profilePhotoInput" type="file" accept="image/*" hidden>
       <div class="me-meta">
         <div id="meName" class="me-name"></div>
         <div id="meRole" class="me-role"></div>
