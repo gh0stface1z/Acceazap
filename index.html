@@ -758,15 +758,13 @@ function renderMessage(key, msg) {
 
   const reactButton = document.createElement("button");
   reactButton.className = "action-button";
-  reactButton.title = "React";
-  reactButton.innerHTML = '<i class="far fa-face-smile"></i>';
+    reactButton.innerHTML = '<i class="far fa-face-smile"></i>';
   reactButton.onclick = (e) => { e.stopPropagation(); showEmojiPicker(key, reactButton); };
   actions.appendChild(reactButton);
 
   const replyButton = document.createElement("button");
   replyButton.className = "action-button";
-  replyButton.title = "Reply";
-  replyButton.innerHTML = '<i class="fas fa-reply"></i>';
+    replyButton.innerHTML = '<i class="fas fa-reply"></i>';
   replyButton.onclick = (e) => {
     e.stopPropagation();
     setReply({ id: key, text: msg.text, name: msg.name });
@@ -776,8 +774,7 @@ function renderMessage(key, msg) {
   if (msg.text) {
     const copyButton = document.createElement("button");
     copyButton.className = "action-button";
-    copyButton.title = "Copy text";
-    copyButton.innerHTML = '<i class="far fa-copy"></i>';
+        copyButton.innerHTML = '<i class="far fa-copy"></i>';
     copyButton.onclick = (e) => {
       e.stopPropagation();
       navigator.clipboard.writeText(msg.text).then(() => showNotification('Copied to clipboard.', 'success'));
@@ -1180,34 +1177,25 @@ function bindEvents() {
   elements.searchInput?.addEventListener('keydown', (e) => { if (e.key === 'Escape') clearSearch(); });
   elements.searchClearBtn?.addEventListener('click', clearSearch);
 
-  // Em computador, as ações aparecem SOMENTE ao passar o mouse sobre a mensagem.
-  // Em celular/touch, um toque na mensagem mostra/esconde as ações.
-  const touchMode = window.matchMedia('(hover: none), (pointer: coarse)').matches;
-  if (touchMode) {
-    elements.messages?.addEventListener('click', (e) => {
-      const actionButton = e.target.closest('.message-actions .action-button');
-      if (actionButton) return;
+  // Ações das mensagens: escondidas por padrão.
+  // Hover mostra no computador; clique/toque fixa temporariamente.
+  elements.messages?.addEventListener('click', (e) => {
+    const actionButton = e.target.closest('.message-actions .action-button');
+    if (actionButton) return;
 
-      const bubble = e.target.closest('.message-bubble');
-      if (!bubble || !elements.messages.contains(bubble)) return;
+    const bubble = e.target.closest('.message-bubble');
+    if (!bubble || !elements.messages.contains(bubble)) return;
 
-      document.querySelectorAll('.message-bubble.actions-visible').forEach(other => {
-        if (other !== bubble) other.classList.remove('actions-visible');
-      });
-      bubble.classList.toggle('actions-visible');
+    document.querySelectorAll('.message-bubble.actions-open').forEach(other => {
+      if (other !== bubble) other.classList.remove('actions-open');
     });
+    bubble.classList.toggle('actions-open');
+  });
 
-    document.addEventListener('click', (e) => {
-      if (e.target.closest('.message-bubble')) return;
-      document.querySelectorAll('.message-bubble.actions-visible').forEach(b => b.classList.remove('actions-visible'));
-    });
-  }
-
-  // Nunca deixa uma mensagem nascer com as ações abertas.
-  const closeOpenMessageActions = () => {
-    document.querySelectorAll('.message-bubble.actions-visible').forEach(b => b.classList.remove('actions-visible'));
-  };
-  closeOpenMessageActions();
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.message-bubble')) return;
+    document.querySelectorAll('.message-bubble.actions-open').forEach(b => b.classList.remove('actions-open'));
+  });
 
   elements.clearReplyBtn?.addEventListener('click', clearReply);
 
@@ -2246,7 +2234,7 @@ mark {
 /* Responsive */
 @media (hover: none), (pointer: coarse) {
   .message-actions { opacity: 0; pointer-events: none; transform: translateY(4px); }
-  .message-bubble.actions-visible .message-actions {
+  .message-bubble.actions-open .message-actions {
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0);
@@ -2482,7 +2470,7 @@ mark {
   z-index: 50 !important;
 }
 .message-bubble:hover .message-actions,
-.message-bubble.actions-visible .message-actions {
+.message-bubble.actions-open .message-actions {
   opacity: 1 !important;
   pointer-events: auto !important;
   transform: translateY(0) !important;
@@ -2530,19 +2518,41 @@ mark {
     pointer-events: auto !important;
     transform: translateY(0) !important;
   }
-  .message-bubble.actions-visible .message-actions {
+  .message-bubble.actions-open .message-actions {
     opacity: 0 !important;
     visibility: hidden !important;
     pointer-events: none !important;
   }
 }
 @media (hover: none), (pointer: coarse) {
-  .message-bubble.actions-visible .message-actions {
+  .message-bubble.actions-open .message-actions {
     opacity: 1 !important;
     visibility: visible !important;
     pointer-events: auto !important;
     transform: translateY(0) !important;
   }
+}
+/* FINAL MESSAGE ACTIONS FIX: hidden until hover or explicit click */
+.message-bubble .message-actions {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(4px) !important;
+}
+.message-bubble:hover .message-actions,
+.message-bubble.actions-open .message-actions {
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  transform: translateY(0) !important;
+}
+.message-bubble .message-actions .action-button {
+  pointer-events: auto !important;
+}
+.delete-action::before,
+.delete-action::after {
+  display: none !important;
+  content: none !important;
 }
 </style>
 
