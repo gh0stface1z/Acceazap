@@ -645,7 +645,7 @@ function renderMessage(key, msg) {
   wrapper.dataset.searchable = (msg.text || '').toLowerCase();
   wrapper.dataset.author = msg.name;
 
-  if (!isMe) {
+  {
     const avatar = document.createElement("div");
     avatar.className = "msg-avatar";
     avatar.style.background = colorFromName(msg.name);
@@ -755,7 +755,8 @@ function renderMessage(key, msg) {
 
   const deleteButton = document.createElement("button");
   deleteButton.className = "action-button delete-action";
-  deleteButton.setAttribute("aria-label", "Apagar mensagem");
+  deleteButton.setAttribute("aria-label", "Apagar");
+  deleteButton.setAttribute("data-tooltip", "Apagar");
   deleteButton.innerHTML = '<i class="far fa-trash-can"></i>';
   deleteButton.onclick = (e) => {
     e.stopPropagation();
@@ -1885,7 +1886,7 @@ mark {
   font-size: 11.5px; font-weight: 700; color: #fff;
   visibility: visible;
 }
-.message-wrapper.grouped .msg-avatar { visibility: hidden; }
+.message-wrapper.grouped .msg-avatar { visibility: visible; }
 
 .message-col { display: flex; flex-direction: column; min-width: 0; }
 .message-wrapper.me .message-col { align-items: flex-end; }
@@ -1941,6 +1942,7 @@ mark {
   cursor: pointer; transition: var(--transition); font-size: 12px;
 }
 .action-button:hover { background: var(--bg-tertiary); color: var(--accent-soft); }
+.action-button[aria-label] { -webkit-user-select: none; user-select: none; }
 
 .message-reactions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .reaction-badge {
@@ -2046,6 +2048,8 @@ mark {
   border: 1px solid var(--border-soft);
   border-radius: 14px;
   box-shadow: var(--shadow-lg);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
 }
 
 .delete-menu-title {
@@ -2099,6 +2103,17 @@ mark {
   color: var(--text-tertiary);
   border-top: 1px solid var(--border-soft);
   border-radius: 0 0 9px 9px;
+}
+
+@media (max-width: 600px) {
+  .delete-menu {
+    width: min(260px, calc(100vw - 20px));
+    padding: 7px;
+  }
+  .delete-menu-option, .delete-menu-cancel {
+    min-height: 42px;
+    font-size: 14px;
+  }
 }
 
 .deleted-message {
