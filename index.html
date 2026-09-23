@@ -14,7 +14,7 @@ import {
   getDatabase, ref as dbRef, push, onChildAdded, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-database.js";
 
-// Firebase Configuration (será usado quando conectarmos o backend)
+// Firebase Configuration
 const firebaseConfig = {
   apiKey: "AIzaSyAe_ZfZ8rKCke47UeA9Kcs8cXpD6-G6RAQ",
   authDomain: "kiko-chat-b6435.firebaseapp.com",
@@ -221,141 +221,6 @@ function updateTypingIndicator() {
   }
 }
 
-
-// Profile photo (local stage)
-function profileStorageKey(username) {
-  return `accea-profile-photo-${mkKey(username)}`;
-}
-
-function getProfilePhoto(username) {
-  if (!username) return '';
-  return localStorage.getItem(profileStorageKey(username)) || '';
-}
-
-function applyAvatarElement(el, username, photo = '') {
-  if (!el) return;
-
-  const src = photo || getProfilePhoto(username);
-  const existingImg = el.querySelector('.avatar-photo');
-
-  if (src) {
-    if (existingImg) {
-      existingImg.src = src;
-    } else {
-      const img = document.createElement('img');
-      img.className = 'avatar-photo';
-      img.src = src;
-      img.alt = `Foto de ${username || 'usuário'}`;
-      img.draggable = false;
-      el.appendChild(img);
-    }
-    el.classList.add('has-profile-photo');
-    el.style.backgroundImage = '';
-    el.style.background = 'var(--bg-tertiary)';
-    return;
-  }
-
-  if (existingImg) existingImg.remove();
-  el.classList.remove('has-profile-photo');
-  el.style.backgroundImage = '';
-  el.style.background = colorFromName(username);
-
-  const statusIndicator = el.querySelector('.status-indicator');
-  el.textContent = initials(username);
-  if (statusIndicator) el.appendChild(statusIndicator);
-}
-
-function applyMessageAvatar(el, username, photo = '') {
-  if (!el) return;
-  const src = photo || getProfilePhoto(username);
-  el.classList.add('msg-avatar');
-  el.innerHTML = '';
-  el.style.background = colorFromName(username);
-
-  if (src) {
-    const img = document.createElement('img');
-    img.className = 'avatar-photo';
-    img.src = src;
-    img.alt = `Foto de ${username || 'usuário'}`;
-    img.draggable = false;
-    el.appendChild(img);
-    el.classList.add('has-profile-photo');
-  } else {
-    el.classList.remove('has-profile-photo');
-    el.textContent = initials(username);
-  }
-}
-
-function refreshProfilePhotoUI(username) {
-  const photo = getProfilePhoto(username);
-
-  if (state.userMap[username]) {
-    state.userMap[username].profile = {
-      ...(state.userMap[username].profile || {}),
-      avatarUrl: photo
-    };
-  }
-
-  if (state.currentUser?.name === username) {
-    applyAvatarElement(elements.meAvatar, username, photo);
-  }
-
-  document.querySelectorAll('.user-item').forEach(row => {
-    if (row.dataset.username !== username) return;
-    const avatar = row.querySelector('.user-avatar');
-    applyAvatarElement(avatar, username, photo);
-  });
-
-  document.querySelectorAll('.message-wrapper').forEach(wrapper => {
-    if (wrapper.dataset.author !== username) return;
-    const avatar = wrapper.querySelector('.msg-avatar');
-    applyMessageAvatar(avatar, username, photo);
-  });
-}
-
-function handleProfilePhoto(file) {
-  if (!state.currentUser || !file) return;
-
-  if (!file.type.startsWith('image/')) {
-    showNotification('Escolha uma imagem para a foto de perfil.', 'error');
-    return;
-  }
-
-  if (file.size > 5 * 1024 * 1024) {
-    showNotification('A foto de perfil deve ter no máximo 5MB.', 'warning');
-    return;
-  }
-
-  const reader = new FileReader();
-
-  reader.onload = () => {
-    const src = reader.result;
-
-    try {
-      localStorage.setItem(profileStorageKey(state.currentUser.name), src);
-      refreshProfilePhotoUI(state.currentUser.name);
-      showNotification('Foto de perfil atualizada.', 'success');
-    } catch (error) {
-      showNotification('Não foi possível salvar essa foto. Tente uma imagem menor.', 'error');
-    }
-  };
-
-  reader.onerror = () => {
-    showNotification('Não foi possível carregar a foto.', 'error');
-  };
-
-  reader.readAsDataURL(file);
-}
-
-function removeProfilePhoto() {
-  if (!state.currentUser) return;
-
-  const key = profileStorageKey(state.currentUser.name);
-  localStorage.removeItem(key);
-  refreshProfilePhotoUI(state.currentUser.name);
-  showNotification('Foto de perfil removida.', 'success');
-}
-
 // User management
 async function createUser(username, pass, role = "user") {
   const key = mkKey(username);
@@ -422,7 +287,7 @@ function updateUsersUI() {
     const avatar = document.createElement("div");
     avatar.className = "user-avatar";
     avatar.style.background = info.profile?.avatarColor || colorFromName(username);
-    applyAvatarElement(avatar, username, info.profile?.avatarUrl || getProfilePhoto(username));
+    avatar.textContent = initials(username);
 
     const indicator = document.createElement("div");
     indicator.className = `status-indicator ${info.status?.online ? 'online' : 'offline'}`;
@@ -475,7 +340,7 @@ async function sendTextMessage(text) {
     text: text.trim(),
     ts: Date.now(),
     deliveredBy: { [state.currentUser.name]: true },
-    seenBy: { [state.currentUser.name]: true },
+    seenBy: {},
     id: generateId()
   };
 
@@ -496,21 +361,22 @@ async function sendTextMessage(text) {
   elements.textInput.style.height = 'auto';
   updateComposerState();
   clearReply();
+  stopTyping();
 }
 
 async function uploadAndSendFile(file) {
-  if (!state.currentUser || !file) return;
+  if (!state.currentUser) return;
 
   const isImg = file.type.startsWith("image/");
   const isVid = file.type.startsWith("video/");
 
   if (!isImg && !isVid) {
-    showNotification("Só imagens ou vídeos podem ser enviados.", 'error');
+    showNotification("Only images or videos can be shared.", 'error');
     return;
   }
 
   if (file.size > 8 * 1024 * 1024) {
-    showNotification("Mantenha os arquivos abaixo de 8MB.", 'warning');
+    showNotification("Keep files under 8MB.", 'warning');
     return;
   }
 
@@ -527,24 +393,20 @@ async function uploadAndSendFile(file) {
         fileSize: file.size,
         ts: Date.now(),
         deliveredBy: { [state.currentUser.name]: true },
-        seenBy: { [state.currentUser.name]: true },
+        seenBy: {},
         id: generateId()
       };
 
       state.messages[messageData.id] = messageData;
       state.messageOrder.push(messageData.id);
 
-      renderMessage(messageData.id, messageData);
+      renderMessages();
+
     } catch (error) {
-      showNotification('Não foi possível enviar o arquivo.', 'error');
+      showNotification('Upload failed. Try again.', 'error');
     } finally {
       showLoadingState(false);
     }
-  };
-
-  reader.onerror = () => {
-    showLoadingState(false);
-    showNotification('Não foi possível ler o arquivo.', 'error');
   };
 
   reader.readAsDataURL(file);
@@ -570,26 +432,13 @@ function updateComposerState() {
 // Message reactions
 async function toggleReaction(messageKey, emoji) {
   if (!state.currentUser) return;
-
-  if (!state.reactions[messageKey]) state.reactions[messageKey] = {};
-  if (!state.reactions[messageKey][emoji]) state.reactions[messageKey][emoji] = {};
-
-  const users = state.reactions[messageKey][emoji];
-  if (users[state.currentUser.name]) {
-    delete users[state.currentUser.name];
+  const reactionRef = dbRef(db, `${REACTIONS_PATH}/${messageKey}/${emoji}/${state.currentUser.name}`);
+  const snapshot = await get(reactionRef);
+  if (snapshot.exists()) {
+    await remove(reactionRef);
   } else {
-    users[state.currentUser.name] = { timestamp: Date.now(), user: state.currentUser.name };
+    await set(reactionRef, { timestamp: serverTimestamp(), user: state.currentUser.name });
   }
-
-  if (Object.keys(users).length === 0) {
-    delete state.reactions[messageKey][emoji];
-  }
-  if (Object.keys(state.reactions[messageKey]).length === 0) {
-    delete state.reactions[messageKey];
-  }
-
-  const messageEl = document.querySelector(`[data-message-id="${messageKey}"] .message-col`);
-  if (messageEl) renderReactionsInto(messageKey, messageEl);
 }
 
 // Reply functionality
@@ -678,10 +527,11 @@ function renderMessage(key, msg) {
   wrapper.dataset.searchable = (msg.text || '').toLowerCase();
   wrapper.dataset.author = msg.name;
 
-  {
+  if (!isMe) {
     const avatar = document.createElement("div");
     avatar.className = "msg-avatar";
-    applyMessageAvatar(avatar, msg.name, state.userMap[msg.name]?.profile?.avatarUrl || getProfilePhoto(msg.name));
+    avatar.style.background = colorFromName(msg.name);
+    avatar.textContent = initials(msg.name);
     wrapper.appendChild(avatar);
   }
 
@@ -758,13 +608,15 @@ function renderMessage(key, msg) {
 
   const reactButton = document.createElement("button");
   reactButton.className = "action-button";
-    reactButton.innerHTML = '<i class="far fa-face-smile"></i>';
+  reactButton.title = "React";
+  reactButton.innerHTML = '<i class="far fa-face-smile"></i>';
   reactButton.onclick = (e) => { e.stopPropagation(); showEmojiPicker(key, reactButton); };
   actions.appendChild(reactButton);
 
   const replyButton = document.createElement("button");
   replyButton.className = "action-button";
-    replyButton.innerHTML = '<i class="fas fa-reply"></i>';
+  replyButton.title = "Reply";
+  replyButton.innerHTML = '<i class="fas fa-reply"></i>';
   replyButton.onclick = (e) => {
     e.stopPropagation();
     setReply({ id: key, text: msg.text, name: msg.name });
@@ -774,25 +626,14 @@ function renderMessage(key, msg) {
   if (msg.text) {
     const copyButton = document.createElement("button");
     copyButton.className = "action-button";
-        copyButton.innerHTML = '<i class="far fa-copy"></i>';
+    copyButton.title = "Copy text";
+    copyButton.innerHTML = '<i class="far fa-copy"></i>';
     copyButton.onclick = (e) => {
       e.stopPropagation();
       navigator.clipboard.writeText(msg.text).then(() => showNotification('Copied to clipboard.', 'success'));
     };
     actions.appendChild(copyButton);
   }
-
-  const deleteButton = document.createElement("button");
-  deleteButton.className = "action-button delete-action";
-  deleteButton.setAttribute("aria-label", "Apagar mensagem");
-  deleteButton.removeAttribute("title");
-  deleteButton.removeAttribute("data-tooltip");
-  deleteButton.innerHTML = '<i class="far fa-trash-can"></i>';
-  deleteButton.onclick = (e) => {
-    e.stopPropagation();
-    openDeleteMenu(key, msg);
-  };
-  actions.appendChild(deleteButton);
 
   bubble.appendChild(actions);
   col.appendChild(bubble);
@@ -823,111 +664,6 @@ function renderMessage(key, msg) {
   requestAnimationFrame(() => wrapper.classList.add('message-entered'));
 }
 
-
-// Delete message functionality
-function closeDeleteMenu() {
-  const overlay = document.getElementById('deleteOverlay');
-  if (overlay) overlay.remove();
-}
-
-function openDeleteMenu(key, msg) {
-  closeDeleteMenu();
-
-  const isMe = msg.name === state.currentUser?.name;
-
-  const overlay = document.createElement('div');
-  overlay.id = 'deleteOverlay';
-  overlay.className = 'delete-overlay';
-
-  const menu = document.createElement('div');
-  menu.className = 'delete-menu';
-  menu.setAttribute('role', 'dialog');
-  menu.setAttribute('aria-modal', 'true');
-
-  const title = document.createElement('div');
-  title.className = 'delete-menu-title';
-  title.textContent = 'Apagar mensagem';
-  menu.appendChild(title);
-
-  const subtitle = document.createElement('div');
-  subtitle.className = 'delete-menu-subtitle';
-  subtitle.textContent = isMe ? 'Escolha onde remover esta mensagem.' : 'Esta mensagem será removida só para você.';
-  menu.appendChild(subtitle);
-
-  const deleteForMe = document.createElement('button');
-  deleteForMe.className = 'delete-menu-option';
-  deleteForMe.innerHTML = '<i class="far fa-trash-can"></i><span>Apagar para mim</span>';
-  deleteForMe.onclick = () => {
-    deleteForMeOnly(key);
-    closeDeleteMenu();
-  };
-  menu.appendChild(deleteForMe);
-
-  if (isMe) {
-    const deleteForEveryone = document.createElement('button');
-    deleteForEveryone.className = 'delete-menu-option danger';
-    deleteForEveryone.innerHTML = '<i class="fas fa-trash-can"></i><span>Apagar para todos</span>';
-    deleteForEveryone.onclick = () => {
-      if (confirm('Apagar esta mensagem para todos?')) deleteForEveryoneLocal(key);
-      closeDeleteMenu();
-    };
-    menu.appendChild(deleteForEveryone);
-  }
-
-  const cancel = document.createElement('button');
-  cancel.className = 'delete-menu-cancel';
-  cancel.textContent = 'Cancelar';
-  cancel.onclick = closeDeleteMenu;
-  menu.appendChild(cancel);
-
-  overlay.appendChild(menu);
-  document.body.appendChild(overlay);
-
-  overlay.addEventListener('click', (e) => {
-    if (e.target === overlay) closeDeleteMenu();
-  });
-
-  menu.querySelector('button')?.focus();
-}
-
-function deleteForMeOnly(key) {
-  const messageEl = document.querySelector(`[data-message-id="${key}"]`);
-  if (messageEl) messageEl.remove();
-
-  delete state.messages[key];
-  state.messageOrder = state.messageOrder.filter(id => id !== key);
-  delete state.reactions[key];
-
-  showNotification('Mensagem apagada para você.', 'success');
-}
-
-function deleteForEveryoneLocal(key) {
-  const message = state.messages[key];
-  if (!message) return;
-
-  message.type = 'deleted';
-  message.text = '';
-  message.data = null;
-  message.filename = null;
-  message.deleted = true;
-  message.deletedAt = Date.now();
-
-  const messageEl = document.querySelector(`[data-message-id="${key}"]`);
-  if (!messageEl) return;
-
-  const bubble = messageEl.querySelector('.message-bubble');
-  if (!bubble) return;
-
-  bubble.querySelectorAll('.message-author, .message-text, .chat-media, .message-footer, .message-actions').forEach(el => el.remove());
-
-  const deletedContent = document.createElement('div');
-  deletedContent.className = 'deleted-message';
-  deletedContent.innerHTML = '<i class="fas fa-ban"></i><span>Mensagem apagada</span>';
-  bubble.appendChild(deletedContent);
-
-  showNotification('Mensagem apagada para todos.', 'success');
-}
-
 function renderReactionsInto(key, col) {
   const existing = col.querySelector('.message-reactions');
   if (existing) existing.remove();
@@ -952,59 +688,6 @@ function renderReactionsInto(key, col) {
   if (Object.keys(reactionGroups).length > 0) col.appendChild(reactionsContainer);
 }
 
-// GIPHY picker (interface local; API será conectada na próxima etapa)
-let gifSearchTimer = null;
-
-function closeGifPicker() {
-  const picker = document.getElementById('gifPicker');
-  if (!picker) return;
-  picker.classList.remove('show');
-  picker.setAttribute('aria-hidden', 'true');
-}
-
-function openGifPicker() {
-  const picker = document.getElementById('gifPicker');
-  if (!picker) return;
-  const emojiPicker = document.getElementById('emojiPicker');
-  if (emojiPicker) emojiPicker.classList.remove('show');
-  picker.classList.toggle('show');
-  picker.setAttribute('aria-hidden', picker.classList.contains('show') ? 'false' : 'true');
-  if (picker.classList.contains('show')) {
-    setTimeout(() => document.getElementById('gifSearchInput')?.focus(), 30);
-  }
-}
-
-function showGifPlaceholder() {
-  const results = document.getElementById('gifResults');
-  if (!results) return;
-  results.innerHTML = '<div class="gif-empty"><i class="fas fa-film"></i><span>Digite algo para pesquisar GIFs</span></div>';
-}
-
-function searchGiphyLocal(query) {
-  const results = document.getElementById('gifResults');
-  if (!results) return;
-  const q = query.trim();
-  if (!q) { showGifPlaceholder(); return; }
-  results.innerHTML = '<div class="gif-empty"><i class="fas fa-spinner fa-spin"></i><span>Preparando a busca do GIPHY…</span></div>';
-}
-
-function bindGifPicker() {
-  elements.gifBtn?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    openGifPicker();
-  });
-  document.getElementById('gifCloseBtn')?.addEventListener('click', closeGifPicker);
-  const input = document.getElementById('gifSearchInput');
-  input?.addEventListener('input', (e) => {
-    clearTimeout(gifSearchTimer);
-    gifSearchTimer = setTimeout(() => searchGiphyLocal(e.target.value), 250);
-  });
-  document.addEventListener('click', (e) => {
-    const picker = document.getElementById('gifPicker');
-    if (picker?.classList.contains('show') && !picker.contains(e.target) && e.target !== elements.gifBtn) closeGifPicker();
-  });
-}
-
 // Emoji picker
 function buildEmojiPicker() {
   const picker = document.getElementById('emojiPicker');
@@ -1024,24 +707,13 @@ function showEmojiPicker(messageKey, button) {
   if (!picker) return;
 
   picker.dataset.messageKey = messageKey;
-  picker.classList.add('show');
 
   const rect = button.getBoundingClientRect();
-  const pickerWidth = Math.min(300, window.innerWidth - 20);
-  const pickerHeight = picker.offsetHeight || 56;
-
-  let left = rect.left + (rect.width / 2) - (pickerWidth / 2);
-  left = Math.max(10, Math.min(left, window.innerWidth - pickerWidth - 10));
-
-  let top = rect.top - pickerHeight - 8;
-  if (top < 10) top = rect.bottom + 8;
-  if (top + pickerHeight > window.innerHeight - 10) {
-    top = Math.max(10, window.innerHeight - pickerHeight - 10);
-  }
-
-  picker.style.width = `${pickerWidth}px`;
+  picker.style.top = `${rect.top - 62}px`;
+  let left = rect.left - 180;
+  left = Math.max(8, Math.min(left, window.innerWidth - 340));
   picker.style.left = `${left}px`;
-  picker.style.top = `${top}px`;
+  picker.classList.add('show');
 
   setTimeout(() => document.addEventListener('click', closeEmojiPicker, { once: true }), 50);
 }
@@ -1110,16 +782,14 @@ function showNotification(message, type = 'info') {
 // Export functionality
 async function exportChat() {
   try {
-    const messages = state.messageOrder
-      .map(key => state.messages[key])
-      .filter(Boolean);
+    const snapshot = await get(roomRef);
+    const messages = snapshot.val() || {};
 
     const exportData = {
       exportDate: new Date().toISOString(),
-      chatRoom: 'ACCEA',
-      messages: messages.map(msg => ({
-        ...msg,
-        timestamp: new Date(msg.ts).toISOString()
+      chatRoom: 'room1',
+      messages: Object.entries(messages).map(([key, msg]) => ({
+        id: key, ...msg, timestamp: new Date(msg.ts).toISOString()
       }))
     };
 
@@ -1127,28 +797,30 @@ async function exportChat() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `accea-export-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `kikochat-export-${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    showNotification('Conversa exportada.', 'success');
+    showNotification('Chat exported.', 'success');
   } catch (error) {
-    showNotification('Não foi possível exportar a conversa.', 'error');
+    showNotification('Export failed.', 'error');
   }
 }
 
 // Clear chat functionality
 async function clearChat() {
-  if (!confirm("Apagar todas as mensagens desta conversa?")) return;
-
-  state.messages = {};
-  state.messageOrder = [];
-  state.reactions = {};
-  state.lastRenderedMeta = { name: null, ts: 0 };
-  elements.messages.innerHTML = '';
-  showNotification('Conversa limpa.', 'success');
+  if (!confirm("Clear all messages for everyone? This can't be undone.")) return;
+  try {
+    await remove(roomRef);
+    await remove(dbRef(db, REACTIONS_PATH));
+    elements.messages.innerHTML = '';
+    state.lastRenderedMeta = { name: null, ts: 0 };
+    showNotification('Chat cleared.', 'success');
+  } catch (error) {
+    showNotification('Could not clear chat.', 'error');
+  }
 }
 
 // Event listeners setup
@@ -1174,21 +846,11 @@ function bindEvents() {
 
   elements.logoutBtn?.addEventListener('click', logout);
 
-  elements.meAvatarWrap?.addEventListener('click', () => {
-    elements.profilePhotoInput?.click();
-  });
-
-  elements.profilePhotoInput?.addEventListener('change', (e) => {
-    const file = e.target.files?.[0];
-    if (file) handleProfilePhoto(file);
-    e.target.value = '';
-  });
-
   elements.textInput?.addEventListener('input', (e) => {
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
     updateComposerState();
-    // Indicador de digitação será conectado ao Firebase depois.
+    if (e.target.value.length > 0) startTyping(); else stopTyping();
   });
 
   elements.textInput?.addEventListener('keydown', (e) => {
@@ -1230,26 +892,6 @@ function bindEvents() {
   elements.searchInput?.addEventListener('keydown', (e) => { if (e.key === 'Escape') clearSearch(); });
   elements.searchClearBtn?.addEventListener('click', clearSearch);
 
-  // Ações das mensagens: escondidas por padrão.
-  // Hover mostra no computador; clique/toque fixa temporariamente.
-  elements.messages?.addEventListener('click', (e) => {
-    const actionButton = e.target.closest('.message-actions .action-button');
-    if (actionButton) return;
-
-    const bubble = e.target.closest('.message-bubble');
-    if (!bubble || !elements.messages.contains(bubble)) return;
-
-    document.querySelectorAll('.message-bubble.actions-open').forEach(other => {
-      if (other !== bubble) other.classList.remove('actions-open');
-    });
-    bubble.classList.toggle('actions-open');
-  });
-
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('.message-bubble')) return;
-    document.querySelectorAll('.message-bubble.actions-open').forEach(b => b.classList.remove('actions-open'));
-  });
-
   elements.clearReplyBtn?.addEventListener('click', clearReply);
 
   elements.backToUsersBtn?.addEventListener('click', () => document.body.classList.remove('show-chat-panel'));
@@ -1275,7 +917,7 @@ function bindEvents() {
   });
 }
 
-// Firebase listeners (reservados para a etapa do Firebase)
+// Firebase listeners
 function attachFirebaseListeners() {
   onChildAdded(roomRef, (snapshot) => renderMessage(snapshot.key, snapshot.val()));
 
@@ -1302,35 +944,28 @@ function attachFirebaseListeners() {
 
 // Login system
 async function login(username, password) {
-  const name = String(username || '').trim();
-
-  if (!name || !password) {
+  if (!username || !password) {
     showNotification("Digite seu nome e sua senha.", 'error');
     return;
   }
 
   const user = {
-    name,
+    name: username.trim(),
     role: "user"
-  };
-
-  state.currentUser = user;
-  state.userMap[name] = {
-    role: "user",
-    profile: {
-      avatarColor: colorFromName(name),
-      avatarUrl: getProfilePhoto(name),
-      status: "Disponível"
-    },
-    status: {
-      online: true,
-      lastSeen: Date.now()
-    }
   };
 
   sessionStorage.setItem("kikochat_user", JSON.stringify(user));
 
-  initChatUI(user);
+  elements.loginView.style.display = "none";
+  elements.mainView.style.display = "grid";
+  elements.meName.textContent = user.name;
+  elements.meRole.textContent = "Membro";
+  elements.meAvatar.textContent = initials(user.name);
+  elements.meAvatar.style.background = colorFromName(user.name);
+
+  buildEmojiPicker();
+
+  setTimeout(() => elements.textInput?.focus(), 150);
 }
   
 function logout() {
@@ -1341,45 +976,35 @@ function logout() {
 // Chat UI initialization
 async function initChatUI(user) {
   state.currentUser = user;
+  await setPresence(user.name);
 
-  if (!state.userMap[user.name]) {
-    state.userMap[user.name] = {
-      role: user.role || "user",
-      profile: {
-        avatarColor: colorFromName(user.name),
-        avatarUrl: getProfilePhoto(user.name),
-        status: "Disponível"
-      },
-      status: {
-        online: true,
-        lastSeen: Date.now()
-      }
-    };
-  } else {
-    state.userMap[user.name].profile = {
-      ...(state.userMap[user.name].profile || {}),
-      avatarUrl: getProfilePhoto(user.name)
-    };
-    state.userMap[user.name].status = {
-      ...(state.userMap[user.name].status || {}),
-      online: true,
-      lastSeen: Date.now()
-    };
-  }
+  onValue(child(usersRef, user.name), (snapshot) => {
+    if (!snapshot.exists()) {
+      sessionStorage.clear();
+      alert("Your account has been removed by the admin.");
+      location.reload();
+    }
+  });
 
   elements.loginView.style.display = "none";
   elements.mainView.style.display = "grid";
   elements.meName.textContent = user.name;
-  elements.meRole.textContent = user.role === "admin" ? "Admin" : "Membro";
-  applyAvatarElement(elements.meAvatar, user.name, getProfilePhoto(user.name));
+  elements.meRole.textContent = user.role;
+  elements.meAvatar.textContent = initials(user.name);
+  elements.meAvatar.style.background = colorFromName(user.name);
 
   if (user.role === "admin") elements.adminPanel.style.display = "flex";
 
-  updateUsersUI();
+  attachFirebaseListeners();
   buildEmojiPicker();
-  bindGifPicker();
 
   setTimeout(() => elements.textInput?.focus(), 150);
+}
+
+function bindGifButton() {
+  elements.gifBtn?.addEventListener("click", () => {
+    showNotification("GIFs serão conectados ao GIPHY no próximo passo.", "info");
+  });
 }
 
 // Initialize app
@@ -1394,8 +1019,6 @@ window.addEventListener("load", async () => {
     meName: document.getElementById("meName"),
     meRole: document.getElementById("meRole"),
     meAvatar: document.getElementById("meAvatar"),
-    meAvatarWrap: document.getElementById("meAvatarWrap"),
-    profilePhotoInput: document.getElementById("profilePhotoInput"),
     usernameLogin: document.getElementById("usernameLogin"),
     passLogin: document.getElementById("passLogin"),
     loginButton: document.getElementById("loginButton"),
@@ -1429,23 +1052,30 @@ window.addEventListener("load", async () => {
   elements.soundToggle.innerHTML = state.soundEnabled ? '<i class="fas fa-volume-up"></i>' : '<i class="fas fa-volume-mute"></i>';
 
   bindEvents();
+  bindGifButton();
 
   const storedUser = sessionStorage.getItem("kikochat_user");
   if (storedUser) {
     try {
       const user = JSON.parse(storedUser);
-      initChatUI(user);
+      const snapshot = await get(child(usersRef, user.name));
+      if (!snapshot.exists()) {
+        sessionStorage.clear();
+        showNotification("Your account was removed.", "error");
+      } else {
+        initChatUI(user);
+      }
     } catch (error) {
-      sessionStorage.removeItem("kikochat_user");
+      sessionStorage.clear();
     }
   }
 });
 
 window.ACCEA = {
-  sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, setTheme, toggleReaction, openDeleteMenu, deleteForMeOnly, deleteForEveryoneLocal
+  sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, setTheme, toggleReaction
 };
 
-// Mantém a sessão ao atualizar a página.
+window.addEventListener("beforeunload", () => sessionStorage.clear());
 </script>
 
 <style>
@@ -1742,43 +1372,6 @@ mark {
   display: flex; align-items: center; gap: 10px;
 }
 
-.me-avatar-wrap {
-  position: relative;
-  width: 38px;
-  height: 38px;
-  flex-shrink: 0;
-  cursor: pointer;
-}
-
-.me-avatar-wrap:hover .avatar-camera {
-  opacity: 1;
-}
-
-.avatar-camera {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-elevated);
-  border: 2px solid var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 8px;
-  opacity: 0.9;
-  transition: var(--transition);
-  pointer-events: none;
-}
-
-.me-avatar.has-profile-photo,
-.user-avatar.has-profile-photo,
-.msg-avatar.has-profile-photo {
-  background-color: var(--bg-tertiary) !important;
-}
-
 .me-avatar {
   width: 38px; height: 38px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
@@ -1971,44 +1564,24 @@ mark {
 
 /* Message groups */
 .message-wrapper {
-  display: flex; align-items: flex-end; gap: 5px;
+  display: flex; align-items: flex-end; gap: 8px;
   max-width: 74%; opacity: 0; transform: translateY(10px);
   transition: opacity 0.35s ease, transform 0.35s ease;
   margin-top: 12px;
 }
 .message-wrapper.grouped { margin-top: 2px; }
 .message-wrapper.message-entered { opacity: 1; transform: translateY(0); }
-.message-wrapper.me { align-self: flex-end; flex-direction: row; }
+.message-wrapper.me { align-self: flex-end; flex-direction: row-reverse; }
 .message-wrapper.other { align-self: flex-start; }
 .message-wrapper.search-hidden { display: none; }
 
-.message-wrapper.me { justify-content: flex-end; }
-.message-wrapper.other { justify-content: flex-start; }
-.message-wrapper.me .msg-avatar { order: 2; }
-.message-wrapper.other .msg-avatar { order: 1; }
-.message-wrapper.me .message-col { order: 1; }
-.message-wrapper.other .message-col { order: 2; }
-
 .msg-avatar {
-  width: 24px; height: 24px; border-radius: 50%; flex: 0 0 24px;
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   font-size: 11.5px; font-weight: 700; color: #fff;
   visibility: visible;
 }
-.message-wrapper.grouped .msg-avatar { visibility: visible; }
-.msg-avatar { overflow: hidden; }
-.avatar-photo {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: cover;
-  border-radius: 50%;
-}
-.me-avatar,
-.user-avatar,
-.msg-avatar {
-  overflow: hidden;
-}
+.message-wrapper.grouped .msg-avatar { visibility: hidden; }
 
 .message-col { display: flex; flex-direction: column; min-width: 0; }
 .message-wrapper.me .message-col { align-items: flex-end; }
@@ -2064,46 +1637,8 @@ mark {
   cursor: pointer; transition: var(--transition); font-size: 12px;
 }
 .action-button:hover { background: var(--bg-tertiary); color: var(--accent-soft); }
-.action-button[aria-label] { -webkit-user-select: none; user-select: none; }
 
 .message-reactions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
-#emojiPicker {
-  position: fixed;
-  z-index: 1000000;
-  display: none;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  width: min(300px, calc(100vw - 20px));
-  padding: 8px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-soft);
-  border-radius: 14px;
-  box-shadow: 0 14px 40px rgba(0,0,0,.35);
-}
-
-#emojiPicker.show {
-  display: flex;
-}
-
-.emoji-option {
-  width: 40px;
-  height: 40px;
-  border: none;
-  border-radius: 9px;
-  background: transparent;
-  font-size: 22px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.emoji-option:hover {
-  background: var(--bg-tertiary);
-  transform: scale(1.08);
-}
-
 .reaction-badge {
   display: flex; align-items: center; gap: 4px; padding: 3px 8px;
   background: var(--bg-elevated); border: 1px solid var(--border-soft);
@@ -2177,21 +1712,6 @@ mark {
 }
 #textInput::placeholder { color: var(--text-tertiary); }
 
-.gif-btn {
-  width: 36px;
-  height: 36px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  color: var(--accent-soft);
-  border: 1px solid var(--border-soft);
-}
-.gif-btn:hover {
-  background: var(--accent-glow);
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
 #sendBtn {
   width: 38px; height: 38px; border: none; background: var(--bg-elevated);
   color: var(--text-tertiary); border-radius: 50%;
@@ -2205,147 +1725,89 @@ mark {
 .composer-hint { margin-top: 8px; font-size: 11px; color: var(--text-tertiary); text-align: center; }
 .composer-hint kbd { font-family: var(--font-mono); background: var(--bg-tertiary); border: 1px solid var(--border-soft); border-radius: 4px; padding: 1px 5px; font-size: 10px; }
 
+/* Emoji Picker */
+#emojiPicker {
+  position: fixed; background: var(--bg-elevated); border: 1px solid var(--border-soft);
+  border-radius: 16px; padding: 8px; box-shadow: var(--shadow-lg);
+  display: flex; gap: 3px; opacity: 0; pointer-events: none;
+  transform: translateY(6px) scale(0.96); transition: var(--transition); z-index: 1000;
+}
+#emojiPicker.show { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
 
-/* GIF picker */
-.gif-picker {
-  position: fixed;
-  right: 22px;
-  bottom: 88px;
-  z-index: 100000;
-  width: min(390px, calc(100vw - 28px));
-  height: min(480px, calc(100vh - 130px));
-  display: none;
-  flex-direction: column;
-  padding: 12px;
-  background: var(--bg-elevated);
+.emoji-option {
+  width: 32px; height: 32px; border: none; background: transparent; font-size: 16px;
+  border-radius: 8px; cursor: pointer; transition: var(--transition);
+  display: flex; align-items: center; justify-content: center;
+}
+.emoji-option:hover { background: var(--bg-tertiary); transform: scale(1.18); }
+
+/* Modals */
+.modal {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(10, 8, 18, 0.86); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2000; opacity: 0; pointer-events: none; transition: var(--transition);
+}
+.modal.show { opacity: 1; pointer-events: auto; }
+
+.modal-content {
+  background: var(--bg-elevated); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg); padding: 20px; max-width: 90vw; max-height: 90vh;
+  position: relative; box-shadow: var(--shadow-lg);
+}
+
+.modal-close {
+  position: absolute; top: -14px; right: -14px; width: 32px; height: 32px;
+  border: 1px solid var(--border-soft); background: var(--bg-elevated); color: var(--text-secondary);
+  font-size: 15px; cursor: pointer; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; transition: var(--transition);
+}
+.modal-close:hover { background: var(--error); color: #fff; border-color: var(--error); }
+
+.media-content { display: flex; align-items: center; justify-content: center; max-width: 80vw; max-height: 80vh; }
+.media-content img, .media-content video { max-width: 100%; max-height: 80vh; border-radius: 8px; }
+
+/* Notifications */
+.notification {
+  position: fixed; top: 20px; right: 20px; padding: 13px 18px 13px 15px;
+  background: var(--bg-elevated); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+  box-shadow: var(--shadow-lg); z-index: 3000; opacity: 0;
+  transform: translateX(20px); transition: var(--transition);
+  max-width: 320px; display: flex; align-items: center; gap: 10px; font-size: 13.5px;
+}
+.notification.show { opacity: 1; transform: translateX(0); }
+.notification i { font-size: 15px; }
+.notification.success { border-left: 3px solid var(--success); } .notification.success i { color: var(--success); }
+.notification.error { border-left: 3px solid var(--error); } .notification.error i { color: var(--error); }
+.notification.warning { border-left: 3px solid var(--warning); } .notification.warning i { color: var(--warning); }
+.notification.info { border-left: 3px solid var(--accent); } .notification.info i { color: var(--accent-soft); }
+
+/* Search result badge */
+#searchResultCount {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%) translateY(24px);
+  font-size: 10.5px; color: var(--text-tertiary); opacity: 0; transition: var(--transition);
+  background: var(--bg-elevated); padding: 2px 7px; border-radius: 10px; pointer-events: none;
+}
+
+.gif-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--accent-soft);
   border: 1px solid var(--border-soft);
-  border-radius: 18px;
-  box-shadow: 0 18px 55px rgba(0,0,0,.4);
 }
-.gif-picker.show { display: flex; }
-.gif-picker-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
-.gif-picker-title { display:flex; align-items:baseline; gap:7px; }
-.gif-picker-title strong { font-size:15px; }
-.gif-picker-title span { font-size:9px; font-weight:800; color:var(--accent-soft); letter-spacing:.08em; }
-.gif-close { width:30px; height:30px; border:0; border-radius:50%; background:transparent; color:var(--text-tertiary); cursor:pointer; }
-.gif-close:hover { background:var(--bg-tertiary); color:var(--text-primary); }
-.gif-search-row { display:flex; align-items:center; gap:8px; padding:9px 11px; background:var(--bg-tertiary); border:1px solid var(--border-soft); border-radius:12px; }
-.gif-search-row i { color:var(--text-tertiary); font-size:12px; }
-#gifSearchInput { flex:1; border:0; outline:0; background:transparent; color:var(--text-primary); font:13px var(--font-body); }
-#gifSearchInput::placeholder { color:var(--text-tertiary); }
-.gif-results { flex:1; min-height:0; overflow:auto; margin-top:10px; display:grid; grid-template-columns:repeat(2,1fr); gap:7px; align-content:start; }
-.gif-empty { grid-column:1/-1; min-height:180px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:9px; color:var(--text-tertiary); font-size:12.5px; text-align:center; }
-.gif-empty i { font-size:24px; color:var(--accent-soft); opacity:.8; }
-.gif-branding { font-size:9px; color:var(--text-tertiary); text-align:right; padding-top:7px; opacity:.7; }
-@media (max-width:768px) {
-  .gif-picker { right:14px; bottom:76px; width:calc(100vw - 28px); height:min(440px,calc(100vh - 110px)); }
-}
-
-/* Delete menu */
-.delete-action:hover {
-  color: var(--error);
-  background: rgba(248, 113, 113, 0.12);
-}
-
-.delete-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 999999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-  background: rgba(0, 0, 0, 0.48);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
-}
-
-.delete-menu {
-  width: min(320px, calc(100vw - 36px));
-  box-sizing: border-box;
-  padding: 12px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-soft);
-  border-radius: 16px;
-  box-shadow: 0 18px 55px rgba(0,0,0,.35);
-  max-height: calc(100vh - 36px);
-  overflow: auto;
-}
-
-.delete-menu-title {
-  padding: 6px 10px 3px;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.delete-menu-subtitle {
-  padding: 0 10px 10px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-tertiary);
-}
-
-.delete-menu-option,
-.delete-menu-cancel {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: none;
-  border-radius: 10px;
-  padding: 12px;
-  background: transparent;
-  color: var(--text-primary);
-  font-family: var(--font-body);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.delete-menu-option:hover,
-.delete-menu-cancel:hover {
-  background: var(--bg-tertiary);
-}
-
-.delete-menu-option:focus-visible,
-.delete-menu-cancel:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.delete-menu-option i {
-  width: 18px;
-  text-align: center;
-  color: var(--text-secondary);
-}
-
-.delete-menu-option.danger {
-  color: var(--error);
-}
-
-.delete-menu-option.danger i {
-  color: var(--error);
-}
-
-.delete-menu-cancel {
-  margin-top: 5px;
-  justify-content: center;
-  color: var(--text-tertiary);
-  border-top: 1px solid var(--border-soft);
-  border-radius: 0 0 9px 9px;
+.gif-btn:hover {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* Responsive */
-@media (hover: none), (pointer: coarse) {
-  .message-actions { opacity: 0; pointer-events: none; transform: translateY(4px); }
-  .message-bubble.actions-open .message-actions {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0);
-  }
-}
-
 @media (max-width: 1200px) { #mainView { grid-template-columns: 284px 1fr; } }
 
 @media (max-width: 768px) {
@@ -2416,11 +1878,7 @@ mark {
     </div>
 
     <div class="me-card">
-      <div id="meAvatarWrap" class="me-avatar-wrap" title="Alterar foto de perfil">
-        <div id="meAvatar" class="me-avatar"></div>
-        <span class="avatar-camera"><i class="fas fa-camera"></i></span>
-      </div>
-      <input id="profilePhotoInput" type="file" accept="image/*" hidden>
+      <div id="meAvatar" class="me-avatar"></div>
       <div class="me-meta">
         <div id="meName" class="me-name"></div>
         <div id="meRole" class="me-role"></div>
@@ -2488,7 +1946,7 @@ mark {
 
       <div class="composer" id="composer">
         <button id="attachBtn" class="composer-btn" title="Anexar foto ou vídeo"><i class="fas fa-paperclip"></i></button>
-        <button id="gifBtn" class="composer-btn gif-btn" title="GIF">GIF</button>
+        <button id="gifBtn" class="composer-btn gif-btn" title="GIF" type="button">GIF</button>
         <input type="file" id="fileInput" accept="image/*,video/*" hidden />
         <textarea id="textInput" placeholder="Digite uma mensagem…" rows="1"></textarea>
         <button id="sendBtn" class="composer-btn" title="Send"><i class="fas fa-paper-plane"></i></button>
@@ -2496,22 +1954,6 @@ mark {
       <div class="composer-hint"><kbd>**bold**</kbd> <kbd>*italic*</kbd> <kbd>`code`</kbd> <kbd>@name</kbd> · <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for a new line</div>
     </div>
   </div>
-</div>
-
-<!-- GIF Picker -->
-<div id="gifPicker" class="gif-picker" aria-hidden="true">
-  <div class="gif-picker-header">
-    <div class="gif-picker-title"><strong>GIF</strong><span>GIPHY</span></div>
-    <button id="gifCloseBtn" class="gif-close" aria-label="Fechar GIFs"><i class="fas fa-xmark"></i></button>
-  </div>
-  <div class="gif-search-row">
-    <i class="fas fa-magnifying-glass"></i>
-    <input id="gifSearchInput" type="search" placeholder="Pesquisar GIFs…" autocomplete="off" />
-  </div>
-  <div id="gifResults" class="gif-results">
-    <div class="gif-empty"><i class="fas fa-film"></i><span>Pesquise um GIF</span></div>
-  </div>
-  <div class="gif-branding">Powered by GIPHY</div>
 </div>
 
 <!-- Emoji Picker -->
@@ -2527,184 +1969,3 @@ mark {
 
 </body>
 </html>
-
-<style id="accea-avatar-delete-final-fix">
-/* CORREÇÃO FINAL DOS AVATARES: nunca podem crescer além da bolinha */
-#meAvatar,
-.user-avatar,
-.msg-avatar {
-  width: 40px !important;
-  height: 40px !important;
-  min-width: 40px !important;
-  min-height: 40px !important;
-  max-width: 40px !important;
-  max-height: 40px !important;
-  border-radius: 50% !important;
-  overflow: hidden !important;
-  position: relative !important;
-  flex: 0 0 40px !important;
-  box-sizing: border-box !important;
-}
-#meAvatar { width:38px !important; height:38px !important; min-width:38px !important; min-height:38px !important; max-width:38px !important; max-height:38px !important; flex-basis:38px !important; }
-.msg-avatar {
-  width: 26px !important;
-  height: 26px !important;
-  min-width: 26px !important;
-  min-height: 26px !important;
-  max-width: 26px !important;
-  max-height: 26px !important;
-  flex-basis: 26px !important;
-}
-#meAvatar > img.avatar-photo,
-.user-avatar > img.avatar-photo,
-.msg-avatar > img.avatar-photo {
-  display: block !important;
-  width: 100% !important;
-  height: 100% !important;
-  min-width: 100% !important;
-  min-height: 100% !important;
-  max-width: 100% !important;
-  max-height: 100% !important;
-  object-fit: cover !important;
-  object-position: center !important;
-  border-radius: 50% !important;
-  position: absolute !important;
-  inset: 0 !important;
-  margin: 0 !important;
-  padding: 0 !important;
-  pointer-events: none !important;
-}
-/* A foto nunca pode capturar o clique dos botões da mensagem. */
-.msg-avatar { pointer-events: none !important; }
-
-/* Avatares ficam exatamente ao lado da bolha, como no WhatsApp. */
-.message-wrapper.me { flex-direction: row !important; }
-.message-wrapper.me .message-col { order: 1 !important; }
-.message-wrapper.me .msg-avatar { order: 2 !important; margin-left: 2px !important; margin-right: 0 !important; }
-.message-wrapper.other .message-col { order: 2 !important; }
-.message-wrapper.other .msg-avatar { order: 1 !important; margin-right: 2px !important; margin-left: 0 !important; }
-
-/* Ações só aparecem ao passar o mouse ou ao tocar/clicar na mensagem. */
-.message-actions {
-  opacity: 0 !important;
-  pointer-events: none !important;
-  transform: translateY(4px) !important;
-  z-index: 50 !important;
-}
-.message-bubble:hover .message-actions,
-.message-bubble.actions-open .message-actions {
-  opacity: 1 !important;
-  pointer-events: auto !important;
-  transform: translateY(0) !important;
-}
-.message-actions .action-button {
-  pointer-events: auto !important;
-  position: relative !important;
-  z-index: 51 !important;
-}
-.delete-action::after,
-.delete-action::before { display: none !important; }
-
-/* Menu de apagar sempre acima de absolutamente tudo. */
-.delete-overlay {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 999999 !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 20px !important;
-  box-sizing: border-box !important;
-  background: rgba(0,0,0,.55) !important;
-}
-.delete-menu {
-  position: relative !important;
-  z-index: 1000000 !important;
-  width: min(340px, calc(100vw - 40px)) !important;
-  max-height: calc(100vh - 40px) !important;
-  overflow: auto !important;
-  box-sizing: border-box !important;
-}
-
-/* Controle final das ações da mensagem */
-.message-actions {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-  transform: translateY(4px) !important;
-}
-@media (hover: hover) and (pointer: fine) {
-  .message-bubble:hover .message-actions {
-    opacity: 1 !important;
-    visibility: visible !important;
-    pointer-events: auto !important;
-    transform: translateY(0) !important;
-  }
-  .message-bubble.actions-open .message-actions {
-    opacity: 0 !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
-  }
-}
-@media (hover: none), (pointer: coarse) {
-  .message-bubble.actions-open .message-actions {
-    opacity: 1 !important;
-    visibility: visible !important;
-    pointer-events: auto !important;
-    transform: translateY(0) !important;
-  }
-}
-/* FINAL MESSAGE ACTIONS FIX: hidden until hover or explicit click */
-.message-bubble .message-actions {
-  opacity: 0 !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-  transform: translateY(4px) !important;
-}
-.message-bubble:hover .message-actions,
-.message-bubble.actions-open .message-actions {
-  opacity: 1 !important;
-  visibility: visible !important;
-  pointer-events: auto !important;
-  transform: translateY(0) !important;
-}
-.message-bubble .message-actions .action-button {
-  pointer-events: auto !important;
-}
-.delete-action::before,
-.delete-action::after {
-  display: none !important;
-  content: none !important;
-}
-</style>
-
-<script>
-/* Reforço final: se algum avatar antigo tiver dimensões erradas, normaliza ao carregar. */
-(function enforceAvatarSizes(){
-  const fix = () => {
-    document.querySelectorAll('#meAvatar, .user-avatar, .msg-avatar').forEach(el => {
-      const isMsg = el.classList.contains('msg-avatar');
-      const size = isMsg ? 26 : (el.id === 'meAvatar' ? 38 : 40);
-      el.style.setProperty('width', size + 'px', 'important');
-      el.style.setProperty('height', size + 'px', 'important');
-      el.style.setProperty('min-width', size + 'px', 'important');
-      el.style.setProperty('min-height', size + 'px', 'important');
-      el.style.setProperty('max-width', size + 'px', 'important');
-      el.style.setProperty('max-height', size + 'px', 'important');
-      el.style.setProperty('overflow', 'hidden', 'important');
-      const img = el.querySelector(':scope > img.avatar-photo');
-      if (img) {
-        img.style.setProperty('width','100%','important');
-        img.style.setProperty('height','100%','important');
-        img.style.setProperty('max-width','100%','important');
-        img.style.setProperty('max-height','100%','important');
-        img.style.setProperty('object-fit','cover','important');
-        img.style.setProperty('position','absolute','important');
-        img.style.setProperty('inset','0','important');
-      }
-    });
-  };
-  fix();
-  new MutationObserver(fix).observe(document.body, {childList:true, subtree:true});
-})();
-</script>
