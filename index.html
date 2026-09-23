@@ -1180,25 +1180,34 @@ function bindEvents() {
   elements.searchInput?.addEventListener('keydown', (e) => { if (e.key === 'Escape') clearSearch(); });
   elements.searchClearBtn?.addEventListener('click', clearSearch);
 
-  // Clique na mensagem mostra/esconde as ações. Clicar nos botões não fecha o menu.
-  elements.messages?.addEventListener('click', (e) => {
-    const actionButton = e.target.closest('.message-actions .action-button');
-    if (actionButton) return;
+  // Em computador, as ações aparecem SOMENTE ao passar o mouse sobre a mensagem.
+  // Em celular/touch, um toque na mensagem mostra/esconde as ações.
+  const touchMode = window.matchMedia('(hover: none), (pointer: coarse)').matches;
+  if (touchMode) {
+    elements.messages?.addEventListener('click', (e) => {
+      const actionButton = e.target.closest('.message-actions .action-button');
+      if (actionButton) return;
 
-    const bubble = e.target.closest('.message-bubble');
-    if (!bubble || !elements.messages.contains(bubble)) return;
+      const bubble = e.target.closest('.message-bubble');
+      if (!bubble || !elements.messages.contains(bubble)) return;
 
-    document.querySelectorAll('.message-bubble.actions-visible').forEach(other => {
-      if (other !== bubble) other.classList.remove('actions-visible');
+      document.querySelectorAll('.message-bubble.actions-visible').forEach(other => {
+        if (other !== bubble) other.classList.remove('actions-visible');
+      });
+      bubble.classList.toggle('actions-visible');
     });
-    bubble.classList.toggle('actions-visible');
-  });
 
-  // Clique fora das mensagens fecha a barra de ações.
-  document.addEventListener('click', (e) => {
-    if (e.target.closest('.message-bubble')) return;
+    document.addEventListener('click', (e) => {
+      if (e.target.closest('.message-bubble')) return;
+      document.querySelectorAll('.message-bubble.actions-visible').forEach(b => b.classList.remove('actions-visible'));
+    });
+  }
+
+  // Nunca deixa uma mensagem nascer com as ações abertas.
+  const closeOpenMessageActions = () => {
     document.querySelectorAll('.message-bubble.actions-visible').forEach(b => b.classList.remove('actions-visible'));
-  });
+  };
+  closeOpenMessageActions();
 
   elements.clearReplyBtn?.addEventListener('click', clearReply);
 
@@ -2505,6 +2514,35 @@ mark {
   max-height: calc(100vh - 40px) !important;
   overflow: auto !important;
   box-sizing: border-box !important;
+}
+
+/* Controle final das ações da mensagem */
+.message-actions {
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+  transform: translateY(4px) !important;
+}
+@media (hover: hover) and (pointer: fine) {
+  .message-bubble:hover .message-actions {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    transform: translateY(0) !important;
+  }
+  .message-bubble.actions-visible .message-actions {
+    opacity: 0 !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+}
+@media (hover: none), (pointer: coarse) {
+  .message-bubble.actions-visible .message-actions {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    transform: translateY(0) !important;
+  }
 }
 </style>
 
