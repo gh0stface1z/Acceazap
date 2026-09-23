@@ -14,7 +14,7 @@ import {
   getDatabase, ref as dbRef, push, onChildAdded, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-database.js";
 
-// Firebase Configuration
+// Firebase Configuration (será usado quando conectarmos o backend)
 const firebaseConfig = {
   apiKey: "AIzaSyAe_ZfZ8rKCke47UeA9Kcs8cXpD6-G6RAQ",
   authDomain: "kiko-chat-b6435.firebaseapp.com",
@@ -340,7 +340,7 @@ async function sendTextMessage(text) {
     text: text.trim(),
     ts: Date.now(),
     deliveredBy: { [state.currentUser.name]: true },
-    seenBy: {},
+    seenBy: { [state.currentUser.name]: true },
     id: generateId()
   };
 
@@ -361,22 +361,21 @@ async function sendTextMessage(text) {
   elements.textInput.style.height = 'auto';
   updateComposerState();
   clearReply();
-  stopTyping();
 }
 
 async function uploadAndSendFile(file) {
-  if (!state.currentUser) return;
+  if (!state.currentUser || !file) return;
 
   const isImg = file.type.startsWith("image/");
   const isVid = file.type.startsWith("video/");
 
   if (!isImg && !isVid) {
-    showNotification("Only images or videos can be shared.", 'error');
+    showNotification("Só imagens ou vídeos podem ser enviados.", 'error');
     return;
   }
 
   if (file.size > 8 * 1024 * 1024) {
-    showNotification("Keep files under 8MB.", 'warning');
+    showNotification("Mantenha os arquivos abaixo de 8MB.", 'warning');
     return;
   }
 
@@ -393,20 +392,24 @@ async function uploadAndSendFile(file) {
         fileSize: file.size,
         ts: Date.now(),
         deliveredBy: { [state.currentUser.name]: true },
-        seenBy: {},
+        seenBy: { [state.currentUser.name]: true },
         id: generateId()
       };
 
       state.messages[messageData.id] = messageData;
       state.messageOrder.push(messageData.id);
 
-      renderMessages();
-
+      renderMessage(messageData.id, messageData);
     } catch (error) {
-      showNotification('Upload failed. Try again.', 'error');
+      showNotification('Não foi possível enviar o arquivo.', 'error');
     } finally {
       showLoadingState(false);
     }
+  };
+
+  reader.onerror = () => {
+    showLoadingState(false);
+    showNotification('Não foi possível ler o arquivo.', 'error');
   };
 
   reader.readAsDataURL(file);
@@ -432,13 +435,26 @@ function updateComposerState() {
 // Message reactions
 async function toggleReaction(messageKey, emoji) {
   if (!state.currentUser) return;
-  const reactionRef = dbRef(db, `${REACTIONS_PATH}/${messageKey}/${emoji}/${state.currentUser.name}`);
-  const snapshot = await get(reactionRef);
-  if (snapshot.exists()) {
-    await remove(reactionRef);
+
+  if (!state.reactions[messageKey]) state.reactions[messageKey] = {};
+  if (!state.reactions[messageKey][emoji]) state.reactions[messageKey][emoji] = {};
+
+  const users = state.reactions[messageKey][emoji];
+  if (users[state.currentUser.name]) {
+    delete users[state.currentUser.name];
   } else {
-    await set(reactionRef, { timestamp: serverTimestamp(), user: state.currentUser.name });
+    users[state.currentUser.name] = { timestamp: Date.now(), user: state.currentUser.name };
   }
+
+  if (Object.keys(users).length === 0) {
+    delete state.reactions[messageKey][emoji];
+  }
+  if (Object.keys(state.reactions[messageKey]).length === 0) {
+    delete state.reactions[messageKey];
+  }
+
+  const messageEl = document.querySelector(`[data-message-id="${messageKey}"] .message-col`);
+  if (messageEl) renderReactionsInto(messageKey, messageEl);
 }
 
 // Reply functionality
@@ -782,14 +798,16 @@ function showNotification(message, type = 'info') {
 // Export functionality
 async function exportChat() {
   try {
-    const snapshot = await get(roomRef);
-    const messages = snapshot.val() || {};
+    const messages = state.messageOrder
+      .map(key => state.messages[key])
+      .filter(Boolean);
 
     const exportData = {
       exportDate: new Date().toISOString(),
-      chatRoom: 'room1',
-      messages: Object.entries(messages).map(([key, msg]) => ({
-        id: key, ...msg, timestamp: new Date(msg.ts).toISOString()
+      chatRoom: 'ACCEA',
+      messages: messages.map(msg => ({
+        ...msg,
+        timestamp: new Date(msg.ts).toISOString()
       }))
     };
 
@@ -797,30 +815,28 @@ async function exportChat() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `kikochat-export-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `accea-export-${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    showNotification('Chat exported.', 'success');
+    showNotification('Conversa exportada.', 'success');
   } catch (error) {
-    showNotification('Export failed.', 'error');
+    showNotification('Não foi possível exportar a conversa.', 'error');
   }
 }
 
 // Clear chat functionality
 async function clearChat() {
-  if (!confirm("Clear all messages for everyone? This can't be undone.")) return;
-  try {
-    await remove(roomRef);
-    await remove(dbRef(db, REACTIONS_PATH));
-    elements.messages.innerHTML = '';
-    state.lastRenderedMeta = { name: null, ts: 0 };
-    showNotification('Chat cleared.', 'success');
-  } catch (error) {
-    showNotification('Could not clear chat.', 'error');
-  }
+  if (!confirm("Apagar todas as mensagens desta conversa?")) return;
+
+  state.messages = {};
+  state.messageOrder = [];
+  state.reactions = {};
+  state.lastRenderedMeta = { name: null, ts: 0 };
+  elements.messages.innerHTML = '';
+  showNotification('Conversa limpa.', 'success');
 }
 
 // Event listeners setup
@@ -850,7 +866,7 @@ function bindEvents() {
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
     updateComposerState();
-    if (e.target.value.length > 0) startTyping(); else stopTyping();
+    // Indicador de digitação será conectado ao Firebase depois.
   });
 
   elements.textInput?.addEventListener('keydown', (e) => {
@@ -917,7 +933,7 @@ function bindEvents() {
   });
 }
 
-// Firebase listeners
+// Firebase listeners (reservados para a etapa do Firebase)
 function attachFirebaseListeners() {
   onChildAdded(roomRef, (snapshot) => renderMessage(snapshot.key, snapshot.val()));
 
@@ -944,28 +960,34 @@ function attachFirebaseListeners() {
 
 // Login system
 async function login(username, password) {
-  if (!username || !password) {
+  const name = String(username || '').trim();
+
+  if (!name || !password) {
     showNotification("Digite seu nome e sua senha.", 'error');
     return;
   }
 
   const user = {
-    name: username.trim(),
+    name,
     role: "user"
+  };
+
+  state.currentUser = user;
+  state.userMap[name] = {
+    role: "user",
+    profile: {
+      avatarColor: colorFromName(name),
+      status: "Disponível"
+    },
+    status: {
+      online: true,
+      lastSeen: Date.now()
+    }
   };
 
   sessionStorage.setItem("kikochat_user", JSON.stringify(user));
 
-  elements.loginView.style.display = "none";
-  elements.mainView.style.display = "grid";
-  elements.meName.textContent = user.name;
-  elements.meRole.textContent = "Membro";
-  elements.meAvatar.textContent = initials(user.name);
-  elements.meAvatar.style.background = colorFromName(user.name);
-
-  buildEmojiPicker();
-
-  setTimeout(() => elements.textInput?.focus(), 150);
+  initChatUI(user);
 }
   
 function logout() {
@@ -976,26 +998,37 @@ function logout() {
 // Chat UI initialization
 async function initChatUI(user) {
   state.currentUser = user;
-  await setPresence(user.name);
 
-  onValue(child(usersRef, user.name), (snapshot) => {
-    if (!snapshot.exists()) {
-      sessionStorage.clear();
-      alert("Your account has been removed by the admin.");
-      location.reload();
-    }
-  });
+  if (!state.userMap[user.name]) {
+    state.userMap[user.name] = {
+      role: user.role || "user",
+      profile: {
+        avatarColor: colorFromName(user.name),
+        status: "Disponível"
+      },
+      status: {
+        online: true,
+        lastSeen: Date.now()
+      }
+    };
+  } else {
+    state.userMap[user.name].status = {
+      ...(state.userMap[user.name].status || {}),
+      online: true,
+      lastSeen: Date.now()
+    };
+  }
 
   elements.loginView.style.display = "none";
   elements.mainView.style.display = "grid";
   elements.meName.textContent = user.name;
-  elements.meRole.textContent = user.role;
+  elements.meRole.textContent = user.role === "admin" ? "Admin" : "Membro";
   elements.meAvatar.textContent = initials(user.name);
   elements.meAvatar.style.background = colorFromName(user.name);
 
   if (user.role === "admin") elements.adminPanel.style.display = "flex";
 
-  attachFirebaseListeners();
+  updateUsersUI();
   buildEmojiPicker();
 
   setTimeout(() => elements.textInput?.focus(), 150);
@@ -1050,15 +1083,9 @@ window.addEventListener("load", async () => {
   if (storedUser) {
     try {
       const user = JSON.parse(storedUser);
-      const snapshot = await get(child(usersRef, user.name));
-      if (!snapshot.exists()) {
-        sessionStorage.clear();
-        showNotification("Your account was removed.", "error");
-      } else {
-        initChatUI(user);
-      }
+      initChatUI(user);
     } catch (error) {
-      sessionStorage.clear();
+      sessionStorage.removeItem("kikochat_user");
     }
   }
 });
@@ -1067,7 +1094,7 @@ window.ACCEA = {
   sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, setTheme, toggleReaction
 };
 
-window.addEventListener("beforeunload", () => sessionStorage.clear());
+// Mantém a sessão ao atualizar a página.
 </script>
 
 <style>
