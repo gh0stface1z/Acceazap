@@ -1180,6 +1180,26 @@ function bindEvents() {
   elements.searchInput?.addEventListener('keydown', (e) => { if (e.key === 'Escape') clearSearch(); });
   elements.searchClearBtn?.addEventListener('click', clearSearch);
 
+  // Clique na mensagem mostra/esconde as ações. Clicar nos botões não fecha o menu.
+  elements.messages?.addEventListener('click', (e) => {
+    const actionButton = e.target.closest('.message-actions .action-button');
+    if (actionButton) return;
+
+    const bubble = e.target.closest('.message-bubble');
+    if (!bubble || !elements.messages.contains(bubble)) return;
+
+    document.querySelectorAll('.message-bubble.actions-visible').forEach(other => {
+      if (other !== bubble) other.classList.remove('actions-visible');
+    });
+    bubble.classList.toggle('actions-visible');
+  });
+
+  // Clique fora das mensagens fecha a barra de ações.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.message-bubble')) return;
+    document.querySelectorAll('.message-bubble.actions-visible').forEach(b => b.classList.remove('actions-visible'));
+  });
+
   elements.clearReplyBtn?.addEventListener('click', clearReply);
 
   elements.backToUsersBtn?.addEventListener('click', () => document.body.classList.remove('show-chat-panel'));
@@ -2216,10 +2236,11 @@ mark {
 
 /* Responsive */
 @media (hover: none), (pointer: coarse) {
-  .message-actions {
+  .message-actions { opacity: 0; pointer-events: none; transform: translateY(4px); }
+  .message-bubble.actions-visible .message-actions {
     opacity: 1;
     pointer-events: auto;
-    transform: none;
+    transform: translateY(0);
   }
 }
 
@@ -2444,12 +2465,18 @@ mark {
 .message-wrapper.other .message-col { order: 2 !important; }
 .message-wrapper.other .msg-avatar { order: 1 !important; margin-right: 2px !important; margin-left: 0 !important; }
 
-/* Não deixar o menu de ações desaparecer enquanto estamos testando no desktop. */
+/* Ações só aparecem ao passar o mouse ou ao tocar/clicar na mensagem. */
 .message-actions {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(4px) !important;
+  z-index: 50 !important;
+}
+.message-bubble:hover .message-actions,
+.message-bubble.actions-visible .message-actions {
   opacity: 1 !important;
   pointer-events: auto !important;
   transform: translateY(0) !important;
-  z-index: 50 !important;
 }
 .message-actions .action-button {
   pointer-events: auto !important;
