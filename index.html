@@ -974,13 +974,24 @@ function showEmojiPicker(messageKey, button) {
   if (!picker) return;
 
   picker.dataset.messageKey = messageKey;
+  picker.classList.add('show');
 
   const rect = button.getBoundingClientRect();
-  picker.style.top = `${rect.top - 62}px`;
-  let left = rect.left - 180;
-  left = Math.max(8, Math.min(left, window.innerWidth - 340));
+  const pickerWidth = Math.min(300, window.innerWidth - 20);
+  const pickerHeight = picker.offsetHeight || 56;
+
+  let left = rect.left + (rect.width / 2) - (pickerWidth / 2);
+  left = Math.max(10, Math.min(left, window.innerWidth - pickerWidth - 10));
+
+  let top = rect.top - pickerHeight - 8;
+  if (top < 10) top = rect.bottom + 8;
+  if (top + pickerHeight > window.innerHeight - 10) {
+    top = Math.max(10, window.innerHeight - pickerHeight - 10);
+  }
+
+  picker.style.width = `${pickerWidth}px`;
   picker.style.left = `${left}px`;
-  picker.classList.add('show');
+  picker.style.top = `${top}px`;
 
   setTimeout(() => document.addEventListener('click', closeEmojiPicker, { once: true }), 50);
 }
@@ -1914,7 +1925,18 @@ mark {
 }
 .message-wrapper.grouped .msg-avatar { visibility: visible; }
 .msg-avatar { overflow: hidden; }
-.msg-avatar .avatar-photo { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: 50%; }
+.avatar-photo {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  border-radius: 50%;
+}
+.me-avatar,
+.user-avatar,
+.msg-avatar {
+  overflow: hidden;
+}
 
 .message-col { display: flex; flex-direction: column; min-width: 0; }
 .message-wrapper.me .message-col { align-items: flex-end; }
@@ -1973,6 +1995,43 @@ mark {
 .action-button[aria-label] { -webkit-user-select: none; user-select: none; }
 
 .message-reactions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+#emojiPicker {
+  position: fixed;
+  z-index: 1000000;
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  width: min(300px, calc(100vw - 20px));
+  padding: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0,0,0,.35);
+}
+
+#emojiPicker.show {
+  display: flex;
+}
+
+.emoji-option {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emoji-option:hover {
+  background: var(--bg-tertiary);
+  transform: scale(1.08);
+}
+
 .reaction-badge {
   display: flex; align-items: center; gap: 4px; padding: 3px 8px;
   background: var(--bg-elevated); border: 1px solid var(--border-soft);
@@ -2156,6 +2215,14 @@ mark {
 }
 
 /* Responsive */
+@media (hover: none), (pointer: coarse) {
+  .message-actions {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}
+
 @media (max-width: 1200px) { #mainView { grid-template-columns: 284px 1fr; } }
 
 @media (max-width: 768px) {
