@@ -60,7 +60,9 @@ let state = {
   searchQuery: '',
   lastRenderedMeta: { name: null, ts: 0 },
   isAtBottom: true,
-  unseenWhileScrolled: 0
+  unseenWhileScrolled: 0,
+  currentChatId: 'g:accea-geral',
+  social: { friends: [], incoming: [], outgoing: [], groups: [], chats: {} }
 };
 
 // DOM elements cache
@@ -390,6 +392,436 @@ function initials(name) {
   return (name || '?')[0].toUpperCase();
 }
 
+function socialStorageKey(username) {
+  return `accea-social-${mkKey(username)}`;
+}
+
+function defaultSocialState() {
+  return {
+    friends: [],
+    incoming: [],
+    outgoing: [],
+    groups: [],
+    chats: {}
+  };
+}
+
+function loadSocialState(username) {
+  if (!username) return defaultSocialState();
+  try {
+    const raw = localStorage.getItem(socialStorageKey(username));
+    if (!raw) return defaultSocialState();
+    const parsed = JSON.parse(raw);
+    return {
+      ...defaultSocialState(),
+      ...parsed,
+      friends: Array.isArray(parsed.friends) ? parsed.friends : [],
+      incoming: Array.isArray(parsed.incoming) ? parsed.incoming : [],
+      outgoing: Array.isArray(parsed.outgoing) ? parsed.outgoing : [],
+      groups: Array.isArray(parsed.groups) ? parsed.groups : [],
+      chats: parsed.chats && typeof parsed.chats === 'object' ? parsed.chats : {}
+    };
+  } catch {
+    return defaultSocialState();
+  }
+}
+
+function makeSocialStorageSafe(social) {
+  const safe = { ...social, chats: {} };
+  Object.entries(social.chats || {}).forEach(([id, chat]) => {
+    safe.chats[id] = {
+      ...chat,
+      messages: (chat.messages || []).map(msg => {
+        if (msg.type === 'image' || msg.type === 'video') {
+          return { ...msg, data: typeof msg.data === 'string' && msg.data.length <= 180000 ? msg.data : '' };
+        }
+        return msg;
+      })
+    };
+  });
+  return safe;
+}
+
+function saveSocialStateForUser(username, social) {
+  try {
+    localStorage.setItem(socialStorageKey(username), JSON.stringify(makeSocialStorageSafe(social)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function saveSocialState() {
+  if (!state.currentUser) return;
+  if (!saveSocialStateForUser(state.currentUser.name, state.social)) {
+    showNotification('Não foi possível salvar as alterações locais.', 'warning');
+  }
+}
+
+function ensureChat(chatId, meta = {}) {
+  if (!state.social.chats[chatId]) {
+    state.social.chats[chatId] = {
+      type: meta.type || 'private',
+      name: meta.name || chatId,
+      participants: Array.isArray(meta.participants) ? meta.participants : [],
+      messages: []
+    };
+  } else {
+    state.social.chats[chatId] = {
+      ...state.social.chats[chatId],
+      ...meta,
+      messages: Array.isArray(state.social.chats[chatId].messages) ? state.social.chats[chatId].messages : []
+    };
+  }
+  return state.social.chats[chatId];
+}
+
+function getPrivateChatId(a, b) {
+  return `p:${[mkKey(a), mkKey(b)].sort().join('|')}`;
+}
+
+function getFriendRequestCount() {
+  return state.social.incoming.length;
+}
+
+function isFriend(username) {
+  return state.social.friends.includes(mkKey(username));
+}
+
+function isOutgoing(username) {
+  return state.social.outgoing.includes(mkKey(username));
+}
+
+function isIncoming(username) {
+  return state.social.incoming.includes(mkKey(username));
+}
+
+function persistIncomingRequest(recipient, sender) {
+  const key = socialStorageKey(recipient);
+  const target = loadSocialState(recipient);
+  const senderKey = mkKey(sender);
+  if (!target.incoming.includes(senderKey)) {
+    target.incoming.push(senderKey);
+    localStorage.setItem(key, JSON.stringify(target));
+  }
+}
+
+function removeIncomingRequest(recipient, sender) {
+  const target = loadSocialState(recipient);
+  target.incoming = target.incoming.filter(x => x !== mkKey(sender));
+  saveSocialStateForUser(recipient, target);
+}
+
+function addFriendRequest(username) {
+  const target = mkKey(username);
+  const me = mkKey(state.currentUser?.name);
+  if (!target || target === me) {
+    showNotification('Digite outra pessoa além de você.', 'warning');
+    return;
+  }
+  if (isFriend(target)) {
+    showNotification('Essa pessoa já está nos seus amigos.', 'info');
+    return;
+  }
+  if (isIncoming(target)) {
+    acceptFriend(target);
+    return;
+  }
+  if (isOutgoing(target)) {
+    showNotification('Solicitação já enviada.', 'info');
+    return;
+  }
+
+  state.social.outgoing.push(target);
+  saveSocialState();
+  persistIncomingRequest(target, me);
+  renderFriendsUI();
+  renderConversationList();
+  showNotification(`Solicitação enviada para ${target}.`, 'success');
+}
+
+function acceptFriend(username) {
+  const target = mkKey(username);
+  const me = mkKey(state.currentUser?.name);
+  if (!target || !me) return;
+
+  if (!state.social.friends.includes(target)) state.social.friends.push(target);
+  state.social.incoming = state.social.incoming.filter(x => x !== target);
+  state.social.outgoing = state.social.outgoing.filter(x => x !== target);
+  saveSocialState();
+
+  const other = loadSocialState(target);
+  if (!other.friends.includes(me)) other.friends.push(me);
+  other.outgoing = other.outgoing.filter(x => x !== me);
+  other.incoming = other.incoming.filter(x => x !== me);
+  saveSocialStateForUser(target, other);
+  removeIncomingRequest(me, target);
+
+  renderFriendsUI();
+  renderConversationList();
+  showNotification(`${target} agora é seu amigo.`, 'success');
+}
+
+function declineFriend(username) {
+  const target = mkKey(username);
+  state.social.incoming = state.social.incoming.filter(x => x !== target);
+  saveSocialState();
+  const other = loadSocialState(target);
+  other.outgoing = other.outgoing.filter(x => x !== mkKey(state.currentUser?.name));
+  saveSocialStateForUser(target, other);
+  removeIncomingRequest(state.currentUser.name, target);
+  renderFriendsUI();
+}
+
+function openFriendModal() {
+  const modal = document.getElementById('socialModal');
+  const body = document.getElementById('socialModalBody');
+  const title = document.getElementById('socialModalTitle');
+  if (!modal || !body || !title) return;
+  title.textContent = 'Adicionar amigo';
+  body.innerHTML = `
+    <div class="social-modal-copy">Digite o nome de usuário da pessoa.</div>
+    <input id="friendUsernameInput" class="admin-input social-modal-input" placeholder="Nome de usuário" autocomplete="off" />
+    <div class="social-modal-actions">
+      <button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Cancelar</button>
+      <button id="sendFriendRequestBtn" class="btn-small btn-primary" type="button">Adicionar</button>
+    </div>`;
+  modal.classList.add('show');
+  document.getElementById('friendUsernameInput')?.focus();
+  document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
+  document.getElementById('sendFriendRequestBtn')?.addEventListener('click', () => {
+    addFriendRequest(document.getElementById('friendUsernameInput')?.value || '');
+    closeSocialModal();
+  }, { once: true });
+  document.getElementById('friendUsernameInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('sendFriendRequestBtn')?.click();
+  });
+}
+
+function openIncomingRequestsModal() {
+  const modal = document.getElementById('socialModal');
+  const body = document.getElementById('socialModalBody');
+  const title = document.getElementById('socialModalTitle');
+  if (!modal || !body || !title) return;
+  title.textContent = 'Solicitações de amizade';
+  if (!state.social.incoming.length) {
+    body.innerHTML = `<div class="social-empty">Nenhuma solicitação pendente.</div><div class="social-modal-actions"><button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Fechar</button></div>`;
+  } else {
+    body.innerHTML = `<div class="request-list">${state.social.incoming.map(name => `
+      <div class="request-row">
+        <div class="request-avatar" style="background:${colorFromName(name)}">${escapeHtml(initials(name))}</div>
+        <div class="request-info"><strong>${escapeHtml(name)}</strong><span>Quer adicionar você</span></div>
+        <div class="request-actions">
+          <button class="btn-small btn-primary request-accept" data-name="${escapeHtml(name)}" type="button">Aceitar</button>
+          <button class="btn-small btn-secondary request-decline" data-name="${escapeHtml(name)}" type="button">Recusar</button>
+        </div>
+      </div>`).join('')}</div><div class="social-modal-actions"><button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Fechar</button></div>`;
+  }
+  modal.classList.add('show');
+  document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
+  body.querySelectorAll('.request-accept').forEach(btn => btn.addEventListener('click', () => { acceptFriend(btn.dataset.name); openIncomingRequestsModal(); }));
+  body.querySelectorAll('.request-decline').forEach(btn => btn.addEventListener('click', () => { declineFriend(btn.dataset.name); openIncomingRequestsModal(); }));
+}
+
+function closeSocialModal() {
+  document.getElementById('socialModal')?.classList.remove('show');
+}
+
+function openGroupModal() {
+  const modal = document.getElementById('socialModal');
+  const body = document.getElementById('socialModalBody');
+  const title = document.getElementById('socialModalTitle');
+  if (!modal || !body || !title) return;
+  title.textContent = 'Criar grupo';
+  if (!state.social.friends.length) {
+    body.innerHTML = `<div class="social-empty">Adicione pelo menos um amigo antes de criar um grupo.</div><div class="social-modal-actions"><button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Fechar</button></div>`;
+    modal.classList.add('show');
+    document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
+    return;
+  }
+  const checks = state.social.friends.map(name => `
+    <label class="group-check"><input type="checkbox" value="${escapeHtml(name)}" /><span>${escapeHtml(name)}</span></label>`).join('');
+  body.innerHTML = `
+    <div class="social-modal-copy">Escolha os amigos que participarão do grupo.</div>
+    <input id="groupNameInput" class="admin-input social-modal-input" placeholder="Nome do grupo" maxlength="40" />
+    <div class="group-members">${checks}</div>
+    <div class="social-modal-actions">
+      <button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Cancelar</button>
+      <button id="createGroupBtn" class="btn-small btn-primary" type="button">Criar grupo</button>
+    </div>`;
+  modal.classList.add('show');
+  document.getElementById('groupNameInput')?.focus();
+  document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
+  document.getElementById('createGroupBtn')?.addEventListener('click', () => {
+    const name = String(document.getElementById('groupNameInput')?.value || '').trim();
+    const selected = Array.from(body.querySelectorAll('input[type="checkbox"]:checked')).map(x => x.value);
+    if (!name) { showNotification('Dê um nome ao grupo.', 'warning'); return; }
+    if (!selected.length) { showNotification('Escolha pelo menos um amigo.', 'warning'); return; }
+    const id = `g:${Date.now().toString(36)}`;
+    const group = { id, name, participants: [mkKey(state.currentUser.name), ...selected.map(mkKey)] };
+    state.social.groups.unshift(group);
+    const chat = ensureChat(id, { type: 'group', name, participants: group.participants });
+    saveSocialState();
+    group.participants.forEach(username => {
+      const other = loadSocialState(username);
+      if (!other.groups.some(g => g.id === id)) other.groups.unshift(group);
+      other.chats[id] = JSON.parse(JSON.stringify(chat));
+      saveSocialStateForUser(username, other);
+    });
+    closeSocialModal();
+    openChat(id);
+    renderConversationList();
+    showNotification(`Grupo "${name}" criado.`, 'success');
+  }, { once: true });
+}
+
+function renderConversationList() {
+  const list = document.getElementById('conversationList');
+  if (!list || !state.currentUser) return;
+  list.innerHTML = '';
+
+  const entries = [
+    { id: 'g:accea-geral', type: 'group', name: 'ACCEA', subtitle: 'Grupo geral', icon: '🐰' },
+    ...state.social.friends.map(name => ({
+      id: getPrivateChatId(state.currentUser.name, name),
+      type: 'private',
+      name,
+      subtitle: state.userMap[name]?.status?.online ? 'online' : 'offline',
+      avatarUrl: state.userMap[name]?.profile?.avatarUrl || getProfilePhoto(name)
+    })),
+    ...state.social.groups.map(group => ({
+      id: group.id,
+      type: 'group',
+      name: group.name,
+      subtitle: `${group.participants.length} participantes`,
+      icon: '👥'
+    }))
+  ];
+
+  entries.forEach(chat => {
+    const row = document.createElement('div');
+    row.className = `conversation-item ${state.currentChatId === chat.id ? 'selected' : ''}`;
+    row.dataset.chatId = chat.id;
+    const avatar = document.createElement('div');
+    avatar.className = 'conversation-avatar';
+    if (chat.avatarUrl) {
+      const img = document.createElement('img');
+      img.src = chat.avatarUrl; img.alt = chat.name; avatar.appendChild(img);
+    } else {
+      avatar.textContent = chat.icon || initials(chat.name);
+      avatar.style.background = chat.type === 'group' ? 'var(--accent-glow)' : colorFromName(chat.name);
+    }
+    const info = document.createElement('div');
+    info.className = 'conversation-info';
+    info.innerHTML = `<div class="conversation-name">${escapeHtml(chat.name)}</div><div class="conversation-sub">${escapeHtml(chat.subtitle)}</div>`;
+    row.append(avatar, info);
+    row.addEventListener('click', () => openChat(chat.id));
+    list.appendChild(row);
+  });
+}
+
+function renderFriendsUI() {
+  const list = document.getElementById('friendsList');
+  const count = document.getElementById('friendCount');
+  if (!list || !state.currentUser) return;
+  if (count) count.textContent = state.social.friends.length;
+  list.innerHTML = '';
+
+  const incoming = state.social.incoming;
+  if (incoming.length) {
+    const req = document.createElement('button');
+    req.className = 'friend-request-banner';
+    req.type = 'button';
+    req.innerHTML = `<i class="fas fa-user-plus"></i><span>${incoming.length} solicitação${incoming.length === 1 ? '' : 'ões'} de amizade</span><i class="fas fa-chevron-right"></i>`;
+    req.addEventListener('click', openIncomingRequestsModal);
+    list.appendChild(req);
+  }
+
+  state.social.friends.forEach(name => {
+    const info = state.userMap[name] || {};
+    const row = document.createElement('div');
+    row.className = 'friend-item';
+    row.dataset.username = name;
+    const avatar = document.createElement('div');
+    avatar.className = 'user-avatar';
+    avatar.style.background = info.profile?.avatarColor || colorFromName(name);
+    applyAvatarElement(avatar, name, info.profile?.avatarUrl || getProfilePhoto(name));
+    const text = document.createElement('div');
+    text.className = 'user-info';
+    text.innerHTML = `<div class="user-name">${escapeHtml(name)}</div><div class="user-status">${info.status?.online ? 'online' : 'offline'}</div>`;
+    const chatBtn = document.createElement('button');
+    chatBtn.className = 'friend-chat-btn'; chatBtn.type = 'button'; chatBtn.title = 'Abrir conversa';
+    chatBtn.innerHTML = '<i class="fas fa-comment"></i>';
+    chatBtn.addEventListener('click', () => openChat(getPrivateChatId(state.currentUser.name, name)));
+    row.append(avatar, text, chatBtn);
+    row.addEventListener('click', (e) => {
+      if (!e.target.closest('.friend-chat-btn')) openChat(getPrivateChatId(state.currentUser.name, name));
+    });
+    list.appendChild(row);
+  });
+
+  if (!state.social.friends.length && !incoming.length) {
+    list.innerHTML += `<div class="social-empty">Você ainda não adicionou ninguém.</div>`;
+  }
+}
+
+function openChat(chatId) {
+  const me = state.currentUser?.name;
+  if (!me) return;
+  if (chatId === 'g:accea-geral') {
+    ensureChat(chatId, { type: 'group', name: 'ACCEA', participants: [] });
+  } else if (chatId.startsWith('p:')) {
+    const names = chatId.slice(2).split('|');
+    const other = names.find(x => x !== mkKey(me)) || names[0];
+    ensureChat(chatId, { type: 'private', name: other, participants: names });
+  }
+
+  state.currentChatId = chatId;
+  const chat = state.social.chats[chatId] || ensureChat(chatId);
+  state.messages = {};
+  state.messageOrder = [];
+  state.reactions = {};
+  state.lastRenderedMeta = { name: null, ts: 0 };
+  elements.messages.innerHTML = '';
+
+  (chat.messages || []).forEach(msg => {
+    state.messages[msg.id] = msg;
+    state.messageOrder.push(msg.id);
+    renderMessage(msg.id, msg);
+  });
+
+  const isGroup = chat.type === 'group';
+  const isGeneral = chatId === 'g:accea-geral';
+  document.querySelector('.room-title').textContent = chat.name || 'Conversa';
+  document.querySelector('.room-sub').textContent = isGeneral
+    ? 'Grupo geral'
+    : isGroup
+      ? `${Math.max(chat.participants?.length || 0, 2)} participantes`
+      : (chat.subtitle || 'Conversa privada');
+  renderConversationList();
+  if (window.innerWidth <= 768) document.body.classList.add('show-chat-panel');
+  setTimeout(() => scrollToBottom(false), 30);
+}
+
+function saveCurrentChat() {
+  if (!state.currentChatId) return;
+  const chat = state.social.chats[state.currentChatId] || ensureChat(state.currentChatId);
+  chat.messages = state.messageOrder.map(id => state.messages[id]).filter(Boolean);
+  state.social.chats[state.currentChatId] = chat;
+  saveSocialState();
+
+  // Prévia local: replica a conversa nos participantes para conseguirmos testar
+  // conversas privadas/grupos antes de ligar o backend real.
+  const participants = Array.isArray(chat.participants) ? [...new Set(chat.participants.map(mkKey))] : [];
+  participants.forEach(username => {
+    const other = loadSocialState(username);
+    other.chats[state.currentChatId] = JSON.parse(JSON.stringify(chat));
+    saveSocialStateForUser(username, other);
+  });
+
+  renderConversationList();
+}
+
 function updateUsersUI() {
   if (!elements.usersList) return;
 
@@ -462,6 +894,8 @@ function updateUsersUI() {
 
     elements.usersList.appendChild(row);
   }
+  renderFriendsUI();
+  renderConversationList();
 }
 
 function selectUser(username) {
@@ -496,6 +930,7 @@ async function sendTextMessage(text) {
   state.messageOrder.push(messageData.id);
 
   renderMessage(messageData.id, messageData);
+  saveCurrentChat();
 
   elements.textInput.value = '';
   elements.textInput.style.height = 'auto';
@@ -540,6 +975,7 @@ async function uploadAndSendFile(file) {
       state.messageOrder.push(messageData.id);
 
       renderMessage(messageData.id, messageData);
+      saveCurrentChat();
     } catch (error) {
       showNotification('Não foi possível enviar o arquivo.', 'error');
     } finally {
@@ -1084,6 +1520,7 @@ function sendGifMessage(gif) {
   state.messages[messageData.id] = messageData;
   state.messageOrder.push(messageData.id);
   renderMessage(messageData.id, messageData);
+  saveCurrentChat();
   closeGifPicker();
 }
 
@@ -1256,10 +1693,25 @@ async function clearChat() {
   state.reactions = {};
   state.lastRenderedMeta = { name: null, ts: 0 };
   elements.messages.innerHTML = '';
+  saveCurrentChat();
   showNotification('Conversa limpa.', 'success');
 }
 
 // Event listeners setup
+function switchSocialTab(tab) {
+  const conv = document.getElementById('conversationList');
+  const friends = document.getElementById('friendsList');
+  const convTab = document.getElementById('conversationsTab');
+  const friendsTab = document.getElementById('friendsTab');
+  if (!conv || !friends || !convTab || !friendsTab) return;
+  const showConv = tab === 'conversations';
+  conv.style.display = showConv ? 'block' : 'none';
+  friends.style.display = showConv ? 'none' : 'block';
+  convTab.classList.toggle('active', showConv);
+  friendsTab.classList.toggle('active', !showConv);
+  if (!showConv) renderFriendsUI(); else renderConversationList();
+}
+
 function bindEvents() {
   elements.themeToggle?.addEventListener('click', () => {
     setTheme(state.theme === 'dark' ? 'light' : 'dark');
@@ -1362,6 +1814,13 @@ function bindEvents() {
 
   elements.backToUsersBtn?.addEventListener('click', () => document.body.classList.remove('show-chat-panel'));
 
+  elements.conversationsTab?.addEventListener('click', () => switchSocialTab('conversations'));
+  elements.friendsTab?.addEventListener('click', () => switchSocialTab('friends'));
+  elements.addFriendBtn?.addEventListener('click', openFriendModal);
+  elements.friendRequestsBtn?.addEventListener('click', openIncomingRequestsModal);
+  elements.newGroupBtn?.addEventListener('click', openGroupModal);
+  document.getElementById('socialModal')?.addEventListener('click', (e) => { if (e.target.id === 'socialModal') closeSocialModal(); });
+
   elements.exportBtn?.addEventListener('click', exportChat);
 
   elements.scrollBottomBtn?.addEventListener('click', () => scrollToBottom(true));
@@ -1381,6 +1840,7 @@ function bindEvents() {
   document.querySelectorAll('.modal-close').forEach(button => {
     button.addEventListener('click', (e) => e.target.closest('.modal').classList.remove('show'));
   });
+  document.getElementById('socialModalClose')?.addEventListener('click', closeSocialModal);
 }
 
 // Firebase listeners (reservados para a etapa do Firebase)
@@ -1483,10 +1943,14 @@ async function initChatUI(user) {
 
   if (user.role === "admin") elements.adminPanel.style.display = "flex";
 
+  state.social = loadSocialState(user.name);
+  ensureChat('g:accea-geral', { type: 'group', name: 'ACCEA', participants: [] });
   updateUsersUI();
   buildEmojiPicker();
   bindGifPicker();
+  openChat(state.currentChatId || 'g:accea-geral');
 
+  switchSocialTab('conversations');
   setTimeout(() => elements.textInput?.focus(), 150);
 }
 
@@ -1496,6 +1960,14 @@ window.addEventListener("load", async () => {
     loginView: document.getElementById("loginView"),
     mainView: document.getElementById("mainView"),
     usersList: document.getElementById("usersList"),
+    conversationList: document.getElementById("conversationList"),
+    friendsList: document.getElementById("friendsList"),
+    friendCount: document.getElementById("friendCount"),
+    conversationsTab: document.getElementById("conversationsTab"),
+    friendsTab: document.getElementById("friendsTab"),
+    addFriendBtn: document.getElementById("addFriendBtn"),
+    friendRequestsBtn: document.getElementById("friendRequestsBtn"),
+    newGroupBtn: document.getElementById("newGroupBtn"),
     onlineCount: document.getElementById("onlineCount"),
     messages: document.getElementById("messages"),
     adminPanel: document.getElementById("adminPanel"),
@@ -1982,6 +2454,47 @@ mark {
   font-size: 9.5px; font-weight: 700; padding: 2px 6px; border-radius: 6px;
   background: var(--accent-glow); color: var(--accent-soft); text-transform: uppercase; letter-spacing: 0.03em;
 }
+
+/* Social / conversations */
+.social-tabs { display:flex; gap:4px; padding:0 18px 8px; }
+.social-tab { flex:1; border:0; background:transparent; color:var(--text-tertiary); padding:8px 10px; border-radius:10px; font:600 12px var(--font-body); cursor:pointer; }
+.social-tab.active { background:var(--bg-tertiary); color:var(--text-primary); box-shadow:inset 0 -2px 0 var(--accent); }
+.social-tab span { margin-left:4px; opacity:.75; }
+.social-toolbar { display:flex; gap:6px; padding:0 18px 9px; }
+.social-tool { flex:1; border:1px solid var(--border-soft); background:var(--bg-tertiary); color:var(--text-secondary); border-radius:10px; padding:8px 9px; font:600 11.5px var(--font-body); cursor:pointer; }
+.social-tool:hover { color:var(--accent-soft); border-color:var(--accent); }
+.social-tool.icon-only { flex:0 0 36px; padding:8px; }
+#conversationList,#friendsList { flex:1; overflow-y:auto; padding:0 10px 10px; }
+.conversation-item,.friend-item { display:flex; align-items:center; gap:10px; padding:9px 10px; margin-bottom:2px; border-radius:10px; cursor:pointer; transition:var(--transition); }
+.conversation-item:hover,.friend-item:hover { background:var(--bg-tertiary); }
+.conversation-item.selected { background:var(--bg-elevated); box-shadow:inset 2px 0 0 var(--accent); }
+.conversation-avatar { width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:0 0 40px;overflow:hidden;font-weight:700; }
+.conversation-avatar img { width:100%;height:100%;object-fit:cover;border-radius:50%; }
+.conversation-info { min-width:0; flex:1; }
+.conversation-name { font-weight:600;font-size:13.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.conversation-sub { margin-top:2px;font-size:11.5px;color:var(--text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.friend-item .user-info { min-width:0; }
+.friend-chat-btn { width:30px;height:30px;border:0;border-radius:9px;background:var(--bg-tertiary);color:var(--text-secondary);cursor:pointer;flex-shrink:0; }
+.friend-chat-btn:hover { color:var(--accent-soft); }
+.friend-request-banner { width:100%; display:flex;align-items:center;gap:8px;border:1px solid var(--border-soft);background:var(--accent-glow);color:var(--text-primary);border-radius:10px;padding:9px 10px;margin-bottom:6px;cursor:pointer;font:600 11.5px var(--font-body); }
+.friend-request-banner span { flex:1;text-align:left; }
+.social-empty { padding:18px 10px;text-align:center;color:var(--text-tertiary);font-size:12px; }
+.social-modal-card { width:min(460px,calc(100vw - 32px)); max-height:80vh; overflow:auto; }
+.social-modal-title { font-size:18px;font-weight:700;color:var(--text-primary);margin-bottom:14px; }
+.social-modal-copy { font-size:12.5px;line-height:1.5;color:var(--text-tertiary);margin-bottom:10px; }
+.social-modal-input { width:100%; box-sizing:border-box; min-width:0; margin-bottom:12px; }
+.social-modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+.social-modal-actions .btn-primary { min-width:100px; padding:9px 13px; font-size:12.5px; }
+.request-list { display:flex; flex-direction:column; gap:8px; }
+.request-row { display:flex; align-items:center; gap:10px; padding:10px; border:1px solid var(--border-soft); border-radius:12px; background:var(--bg-tertiary); }
+.request-avatar { width:36px;height:36px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:0 0 36px; }
+.request-info { min-width:0;flex:1;display:flex;flex-direction:column;gap:2px; }
+.request-info strong { font-size:13px;color:var(--text-primary); }
+.request-info span { font-size:11px;color:var(--text-tertiary); }
+.request-actions { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+.group-members { display:grid; grid-template-columns:1fr 1fr; gap:7px; max-height:210px; overflow:auto; }
+.group-check { display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid var(--border-soft);border-radius:9px;background:var(--bg-tertiary);font-size:12px;color:var(--text-primary);cursor:pointer; }
+.group-check input { accent-color:var(--accent); }
 
 /* Admin panel */
 #adminPanel {
@@ -2551,8 +3064,19 @@ mark {
       <div id="searchResultCount"></div>
     </div>
 
-    <div class="section-label"><span class="dot"></span>Pessoas (<span id="onlineCount">0</span> online)</div>
-    <div id="usersList"></div>
+    <div class="social-tabs">
+      <button id="conversationsTab" class="social-tab active" type="button">Conversas</button>
+      <button id="friendsTab" class="social-tab" type="button">Amigos <span id="friendCount">0</span></button>
+    </div>
+    <div class="social-toolbar">
+      <button id="addFriendBtn" class="social-tool" type="button"><i class="fas fa-user-plus"></i> Adicionar amigo</button>
+      <button id="friendRequestsBtn" class="social-tool icon-only" type="button" title="Solicitações"><i class="fas fa-user-clock"></i></button>
+      <button id="newGroupBtn" class="social-tool icon-only" type="button" title="Novo grupo"><i class="fas fa-users"></i></button>
+    </div>
+    <div class="section-label"><span class="dot"></span><span id="onlineCount">0</span> online</div>
+    <div id="conversationList"></div>
+    <div id="friendsList" style="display:none"></div>
+    <div id="usersList" style="display:none"></div>
 
     <div id="adminPanel">
       <div class="admin-title">Ferramentas do administrador</div>
@@ -2611,6 +3135,15 @@ mark {
       </div>
       <div class="composer-hint"><kbd>**bold**</kbd> <kbd>*italic*</kbd> <kbd>`code`</kbd> <kbd>@name</kbd> · <kbd>Enter</kbd> to send, <kbd>Shift+Enter</kbd> for a new line</div>
     </div>
+  </div>
+</div>
+
+<!-- Social modal -->
+<div id="socialModal" class="modal social-modal">
+  <div class="modal-content social-modal-card">
+    <button class="modal-close" id="socialModalClose" type="button"><i class="fas fa-times"></i></button>
+    <div class="social-modal-title" id="socialModalTitle">Adicionar amigo</div>
+    <div id="socialModalBody"></div>
   </div>
 </div>
 
