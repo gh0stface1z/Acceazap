@@ -967,6 +967,7 @@ function renderReactionsInto(key, col) {
 
 // GIPHY picker
 let gifSearchTimer = null;
+let gifPickerBound = false;
 
 function closeGifPicker() {
   const picker = document.getElementById('gifPicker');
@@ -1030,7 +1031,7 @@ function renderGifResults(items) {
   });
 }
 
-async async function searchGiphyLocal(query) {
+async function searchGiphyLocal(query) {
   const results = document.getElementById('gifResults');
   if (!results) return;
   const q = query.trim();
@@ -1048,7 +1049,7 @@ async async function searchGiphyLocal(query) {
       api_key: GIPHY_API_KEY,
       q,
       limit: '24',
-      rating: 'pg-13',
+      rating: 'g',
       lang: 'pt'
     });
 
@@ -1087,7 +1088,11 @@ function sendGifMessage(gif) {
 }
 
 function bindGifPicker() {
-  elements.gifBtn?.addEventListener('click', (e) => {
+  if (gifPickerBound) return;
+  gifPickerBound = true;
+
+  const gifButton = elements.gifBtn || document.getElementById('gifBtn');
+  gifButton?.addEventListener('click', (e) => {
     e.stopPropagation();
     openGifPicker();
   });
@@ -1102,7 +1107,7 @@ function bindGifPicker() {
 
   document.addEventListener('click', (e) => {
     const picker = document.getElementById('gifPicker');
-    if (picker?.classList.contains('show') && !picker.contains(e.target) && e.target !== elements.gifBtn) {
+    if (picker?.classList.contains('show') && !picker.contains(e.target) && e.target !== gifButton) {
       closeGifPicker();
     }
   });
@@ -2599,7 +2604,7 @@ mark {
 
       <div class="composer" id="composer">
         <button id="attachBtn" class="composer-btn" title="Anexar foto ou vídeo"><i class="fas fa-paperclip"></i></button>
-        <button id="gifBtn" class="composer-btn gif-btn" title="GIF">GIF</button>
+        <button id="gifBtn" type="button" class="composer-btn gif-btn" title="GIF">GIF</button>
         <input type="file" id="fileInput" accept="image/*,video/*" hidden />
         <textarea id="textInput" placeholder="Digite uma mensagem…" rows="1"></textarea>
         <button id="sendBtn" class="composer-btn" title="Send"><i class="fas fa-paper-plane"></i></button>
