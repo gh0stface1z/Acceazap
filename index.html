@@ -587,7 +587,9 @@ function openFriendModal() {
       <button id="sendFriendRequestBtn" class="btn-small btn-primary" type="button">Adicionar</button>
     </div>`;
   modal.classList.add('show');
-  document.getElementById('friendUsernameInput')?.focus();
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
+  setTimeout(() => document.getElementById('friendUsernameInput')?.focus(), 30);
   document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
   document.getElementById('sendFriendRequestBtn')?.addEventListener('click', () => {
     addFriendRequest(document.getElementById('friendUsernameInput')?.value || '');
@@ -618,13 +620,21 @@ function openIncomingRequestsModal() {
       </div>`).join('')}</div><div class="social-modal-actions"><button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Fechar</button></div>`;
   }
   modal.classList.add('show');
+  modal.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('modal-open');
   document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
   body.querySelectorAll('.request-accept').forEach(btn => btn.addEventListener('click', () => { acceptFriend(btn.dataset.name); openIncomingRequestsModal(); }));
   body.querySelectorAll('.request-decline').forEach(btn => btn.addEventListener('click', () => { declineFriend(btn.dataset.name); openIncomingRequestsModal(); }));
 }
 
 function closeSocialModal() {
-  document.getElementById('socialModal')?.classList.remove('show');
+  const modal = document.getElementById('socialModal');
+  if (!modal) return;
+  modal.classList.remove('show');
+  modal.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('modal-open');
+  const active = document.activeElement;
+  if (active && typeof active.blur === 'function') active.blur();
 }
 
 function openGroupModal() {
@@ -636,6 +646,8 @@ function openGroupModal() {
   if (!state.social.friends.length) {
     body.innerHTML = `<div class="social-empty">Adicione pelo menos um amigo antes de criar um grupo.</div><div class="social-modal-actions"><button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Fechar</button></div>`;
     modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('modal-open');
     document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
     return;
   }
@@ -1819,7 +1831,22 @@ function bindEvents() {
   elements.addFriendBtn?.addEventListener('click', openFriendModal);
   elements.friendRequestsBtn?.addEventListener('click', openIncomingRequestsModal);
   elements.newGroupBtn?.addEventListener('click', openGroupModal);
-  document.getElementById('socialModal')?.addEventListener('click', (e) => { if (e.target.id === 'socialModal') closeSocialModal(); });
+  const socialModal = document.getElementById('socialModal');
+  socialModal?.addEventListener('click', (e) => {
+    if (e.target === socialModal) closeSocialModal();
+  });
+  socialModal?.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSocialModal();
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && socialModal?.classList.contains('show')) {
+      e.preventDefault();
+      closeSocialModal();
+    }
+  });
 
   elements.exportBtn?.addEventListener('click', exportChat);
 
@@ -3004,6 +3031,17 @@ mark {
 
 *:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
+
+<style id="social-modal-close-fix">
+body.modal-open { overflow: hidden; }
+.social-modal { z-index: 5000 !important; }
+.social-modal-card { position: relative; z-index: 5001; }
+.social-modal .modal-close { z-index: 5002; }
+@media (max-width: 480px) {
+  .social-modal-card { width: calc(100vw - 24px); max-height: calc(100vh - 48px); padding: 18px; }
+  .social-modal-actions { position: sticky; bottom: 0; padding-top: 10px; background: var(--bg-elevated); }
+}
+</style>
 </head>
 <body data-theme="dark">
 
@@ -3139,7 +3177,7 @@ mark {
 </div>
 
 <!-- Social modal -->
-<div id="socialModal" class="modal social-modal">
+<div id="socialModal" class="modal social-modal" aria-hidden="true">
   <div class="modal-content social-modal-card">
     <button class="modal-close" id="socialModalClose" type="button"><i class="fas fa-times"></i></button>
     <div class="social-modal-title" id="socialModalTitle">Adicionar amigo</div>
