@@ -76,6 +76,8 @@ let state = {
 // DOM elements cache
 const elements = {};
 
+let authBootstrapping = false;
+
 // Utility functions
 function mkKey(name) { return String(name || "").trim().toLowerCase(); }
 
@@ -1937,12 +1939,10 @@ async function registerAccount(username, password) {
     showNotification('Digite um nome de usuário e uma senha.', 'warning');
     return;
   }
-
   if (!/^[a-z0-9._-]{3,30}$/.test(name)) {
     showNotification('Use 3 a 30 caracteres: letras, números, ponto, _ ou -.', 'warning');
     return;
   }
-
   if (password.length < 6) {
     showNotification('A senha precisa ter pelo menos 6 caracteres.', 'warning');
     return;
@@ -1951,45 +1951,41 @@ async function registerAccount(username, password) {
   try {
     elements.loginButton.disabled = true;
     elements.registerButton.disabled = true;
+    authBootstrapping = true;
 
-    const existing = await get(child(usersRef, name));
-    if (existing.exists()) {
-      showNotification('Esse nome de usuário já existe.', 'error');
-      return;
-    }
-
+    // A própria autenticação verifica se esse nome técnico já está cadastrado.
     const credential = await createUserWithEmailAndPassword(
       auth,
       authEmailForUsername(name),
       password
     );
 
-    await set(child(usersRef, name), {
-      role: 'user',
-      authUid: credential.user.uid,
-      profile: {
-        avatarColor: colorFromName(name),
-        avatarUrl: getProfilePhoto(name),
-        status: 'Disponível',
-        joinDate: serverTimestamp()
-      }
-    });
+    const user = { name, role: 'user', uid: credential.user.uid };
+    sessionStorage.setItem('kikochat_user', JSON.stringify(user));
 
-    const user = {
-      name,
-      role: 'user',
-      uid: credential.user.uid
-    };
+    // Salva o perfil no Realtime Database. Se as regras do banco ainda estiverem
+    // bloqueadas, a conta do Authentication continua criada e o usuário consegue entrar.
+    try {
+      await set(child(usersRef, name), {
+        role: 'user',
+        authUid: credential.user.uid,
+        profile: {
+          avatarColor: colorFromName(name),
+          avatarUrl: getProfilePhoto(name),
+          status: 'Disponível',
+          joinDate: serverTimestamp()
+        }
+      });
+    } catch (dbError) {
+      console.warn('Conta criada no Authentication, mas o perfil ainda não foi salvo no Database:', dbError);
+    }
 
-    sessionStorage.setItem("kikochat_user", JSON.stringify(user));
     showNotification(`Conta @${name} criada.`, 'success');
     await initChatUI(user);
   } catch (error) {
-    try {
-      if (auth.currentUser) await deleteUser(auth.currentUser);
-    } catch {}
     showNotification(firebaseAuthMessage(error), 'error');
   } finally {
+    authBootstrapping = false;
     elements.loginButton.disabled = false;
     elements.registerButton.disabled = false;
   }
@@ -1997,9 +1993,8 @@ async function registerAccount(username, password) {
 
 async function login(username, password) {
   const name = mkKey(username);
-
   if (!name || !password) {
-    showNotification("Digite seu nome e sua senha.", 'error');
+    showNotification('Digite seu nome e sua senha.', 'error');
     return;
   }
 
@@ -2007,33 +2002,22 @@ async function login(username, password) {
     elements.loginButton.disabled = true;
     elements.loginButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Entrando...';
 
-    const snapshot = await get(child(usersRef, name));
-    if (!snapshot.exists()) {
-      showNotification('Esse nome de usuário não existe.', 'error');
-      return;
-    }
-
-    const userData = snapshot.val();
-
     const credential = await signInWithEmailAndPassword(
       auth,
       authEmailForUsername(name),
       password
     );
 
-    const user = {
-      name,
-      role: userData.role || 'user',
-      uid: credential.user.uid
-    };
-
-    if (userData.authUid !== credential.user.uid) {
-      await update(child(usersRef, name), {
-        authUid: credential.user.uid
-      });
+    let role = 'user';
+    try {
+      const snapshot = await get(child(usersRef, name));
+      if (snapshot.exists()) role = snapshot.val().role || 'user';
+    } catch (dbError) {
+      console.warn('Login autenticado; perfil do Database ainda indisponível:', dbError);
     }
 
-    sessionStorage.setItem("kikochat_user", JSON.stringify(user));
+    const user = { name, role, uid: credential.user.uid };
+    sessionStorage.setItem('kikochat_user', JSON.stringify(user));
     await initChatUI(user);
   } catch (error) {
     showNotification(firebaseAuthMessage(error), 'error');
@@ -2158,6 +2142,7 @@ window.addEventListener("load", async () => {
   bindGifPicker();
 
   onAuthStateChanged(auth, async (firebaseUser) => {
+    if (authBootstrapping) return;
     if (!firebaseUser) {
       sessionStorage.removeItem("kikochat_user");
       return;
@@ -3291,9 +3276,6 @@ body.modal-open { overflow: hidden !important; }
     <button id="registerButton" class="btn-small btn-secondary" style="width:100%; margin-top:10px;">
       Criar conta
     </button>
-    <div style="margin-top:10px; text-align:center; font-size:11px; color:var(--text-tertiary);">
-      A conta é salva no Firebase. A senha não é guardada no banco do ACCEA.
-    </div>
   </div>
 </div>
 
