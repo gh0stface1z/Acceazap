@@ -554,31 +554,31 @@ async function addFriendRequest(username) {
   const me = mkKey(state.currentUser?.name);
   if (!target || target === me) {
     showNotification('Digite outra pessoa além de você.', 'warning');
-    return;
+    return false;
   }
   if (!state.currentUser?.uid) {
     showNotification('Sua sessão ainda não está pronta.', 'warning');
-    return;
+    return false;
   }
 
   try {
     const targetSnap = await get(child(usersRef, target));
     if (!targetSnap.exists()) {
       showNotification(`O usuário @${target} não existe.`, 'warning');
-      return;
+      return false;
     }
 
     const pairSnap = await get(child(friendshipsRef, friendshipKey(me, target)));
     if (pairSnap.exists()) {
       showNotification('Essa pessoa já está nos seus amigos.', 'info');
-      return;
+      return false;
     }
 
     const requestPath = `${FRIEND_REQUESTS_PATH}/${target}/${me}`;
     const requestSnap = await get(dbRef(db, requestPath));
     if (requestSnap.exists()) {
       showNotification('Solicitação já enviada.', 'info');
-      return;
+      return false;
     }
 
     await set(dbRef(db, requestPath), {
@@ -593,9 +593,11 @@ async function addFriendRequest(username) {
     renderFriendsUI();
     renderConversationList();
     showNotification(`Solicitação enviada para ${target}.`, 'success');
+    return true;
   } catch (error) {
     console.error(error);
     showNotification('Não foi possível enviar a solicitação. Verifique a conexão com o Firebase.', 'error');
+    return false;
   }
 }
 
@@ -2306,7 +2308,8 @@ window.addEventListener("load", async () => {
 });
 
 window.ACCEA = {
-  sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, registerAccount, setTheme, toggleReaction, openDeleteMenu, deleteForMeOnly, deleteForEveryoneLocal
+  sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, registerAccount, setTheme, toggleReaction, openDeleteMenu, deleteForMeOnly, deleteForEveryoneLocal,
+  openFriendModal, addFriendRequest, acceptFriend, declineFriend, openIncomingRequestsModal
 };
 
 // Mantém a sessão ao atualizar a página.
@@ -3552,6 +3555,88 @@ body.modal-open { overflow: hidden !important; }
 
 
 
+
+<script id="accea-social-button-fallback">
+(function(){
+  function bindSocialButtons(){
+    // Capturing listener makes these controls work even if another initialization
+    // error prevented the original bindEvents() listener from being attached.
+    if (window.__acceaSocialFallbackBound) return;
+    window.__acceaSocialFallbackBound = true;
+
+    document.addEventListener('click', async function(event){
+      const addFriend = event.target.closest('#addFriendBtn');
+      const sendFriend = event.target.closest('#sendFriendRequestBtn');
+
+      if (addFriend) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (window.ACCEA?.openFriendModal) window.ACCEA.openFriendModal();
+        return;
+      }
+
+      if (sendFriend) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+
+        const input = document.getElementById('friendUsernameInput');
+        const button = document.getElementById('sendFriendRequestBtn');
+        const username = input?.value || '';
+        const normalized = String(username).trim().toLowerCase();
+        if (!normalized) {
+          showFriendStatus('Digite o nome de usuário.', 'warning');
+          input?.focus();
+          return;
+        }
+        if (!window.ACCEA?.addFriendRequest) {
+          showFriendStatus('O ACCEA ainda está carregando. Tente novamente em um instante.', 'error');
+          return;
+        }
+
+        if (button) {
+          button.disabled = true;
+          button.dataset.oldText = button.textContent;
+          button.textContent = 'Enviando...';
+        }
+
+        try {
+          const ok = await window.ACCEA.addFriendRequest(normalized);
+          if (ok) {
+            showFriendStatus('Solicitação enviada.', 'success');
+            document.getElementById('socialModal')?.classList.remove('show');
+            document.getElementById('socialModal')?.setAttribute('aria-hidden','true');
+            document.body.classList.remove('modal-open');
+          }
+        } finally {
+          if (button) {
+            button.disabled = false;
+            button.textContent = button.dataset.oldText || 'Adicionar';
+          }
+        }
+      }
+    }, true);
+  }
+
+  function showFriendStatus(message, type){
+    let box = document.getElementById('accea-friend-status');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'accea-friend-status';
+      box.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:200000;max-width:90vw;padding:11px 15px;border-radius:10px;background:#1b2230;color:#fff;font:600 13px Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35);text-align:center;';
+      document.body.appendChild(box);
+    }
+    box.textContent = message;
+    box.style.border = type === 'success' ? '1px solid rgba(34,197,94,.45)' : type === 'warning' ? '1px solid rgba(245,158,11,.45)' : '1px solid rgba(239,68,68,.45)';
+    box.style.display = 'block';
+    clearTimeout(box._timer);
+    box._timer = setTimeout(() => { box.style.display = 'none'; }, 3200);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindSocialButtons, {once:true});
+  else bindSocialButtons();
+  window.addEventListener('load', bindSocialButtons, {once:true});
+})();
+</script>
 
 <script id="accea-register-fallback">
 (function () {
