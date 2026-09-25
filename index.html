@@ -1733,7 +1733,6 @@ function bindEvents() {
   });
 
   elements.loginButton?.addEventListener('click', () => login(elements.usernameLogin.value, elements.passLogin.value));
-  elements.registerButton?.addEventListener('click', () => registerAccount(elements.usernameLogin.value, elements.passLogin.value));
 
   [elements.usernameLogin, elements.passLogin].forEach(input => {
     input.addEventListener("keydown", (e) => {
@@ -1991,6 +1990,14 @@ async function registerAccount(username, password) {
   }
 }
 
+// Botão global de criação de conta: fica disponível diretamente no HTML e não depende
+// da ordem de outros listeners da interface.
+window.ACCEA_REGISTER = function () {
+  const username = document.getElementById("usernameLogin")?.value || "";
+  const password = document.getElementById("passLogin")?.value || "";
+  return registerAccount(username, password);
+};
+
 async function login(username, password) {
   const name = mkKey(username);
   if (!name || !password) {
@@ -2184,7 +2191,7 @@ window.addEventListener("load", async () => {
 });
 
 window.ACCEA = {
-  sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, setTheme, toggleReaction, openDeleteMenu, deleteForMeOnly, deleteForEveryoneLocal
+  sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, registerAccount, setTheme, toggleReaction, openDeleteMenu, deleteForMeOnly, deleteForEveryoneLocal
 };
 
 // Mantém a sessão ao atualizar a página.
@@ -3273,7 +3280,7 @@ body.modal-open { overflow: hidden !important; }
     <button id="loginButton" class="btn-primary">
       <span>Entrar</span><i class="fas fa-arrow-right"></i>
     </button>
-    <button id="registerButton" class="btn-small btn-secondary" style="width:100%; margin-top:10px;">
+    <button id="registerButton" type="button" class="btn-small btn-secondary" style="width:100%; margin-top:10px;" onclick="window.ACCEA_REGISTER()">
       Criar conta
     </button>
   </div>
@@ -3424,6 +3431,15 @@ body.modal-open { overflow: hidden !important; }
     <div class="media-content"></div>
   </div>
 </div>
+
+
+<script>
+// Fallback simples: se o navegador restaurar o botão como desabilitado, reativa ao carregar.
+window.addEventListener("load", () => {
+  const button = document.getElementById("registerButton");
+  if (button) button.disabled = false;
+});
+</script>
 
 </body>
 </html>
