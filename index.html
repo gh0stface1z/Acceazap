@@ -9,24 +9,25 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+import { getAuth } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import {
   getDatabase, ref as dbRef, push, onChildAdded, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp
-} from "https://www.gstatic.com/firebasejs/10.12.3/firebase-database.js";
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
-// Firebase Configuration (será usado quando conectarmos o backend)
+// Firebase Configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyAe_ZfZ8rKCke47UeA9Kcs8cXpD6-G6RAQ",
-  authDomain: "kiko-chat-b6435.firebaseapp.com",
-  databaseURL: "https://kiko-chat-b6435-default-rtdb.firebaseio.com",
-  projectId: "kiko-chat-b6435",
-  storageBucket: "kiko-chat-b6435.firebasestorage.app",
-  messagingSenderId: "896370793240",
-  appId: "1:896370793240:web:3f14442a5d80cd71fb1c6d",
-  measurementId: "G-FB55ZBH15N"
+  apiKey: "AIzaSyBg8hTrPFUdJk3Ryb0a_guXzfzn4vdoGDU",
+  authDomain: "accea-ee9d8.firebaseapp.com",
+  projectId: "accea-ee9d8",
+  storageBucket: "accea-ee9d8.firebasestorage.app",
+  messagingSenderId: "744792956589",
+  appId: "1:744792956589:web:318a1b0d7f2c4aae8cf024",
+  measurementId: "G-67THHGQ0NX"
 };
 
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getDatabase(app);
 
 // Database paths
