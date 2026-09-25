@@ -1865,7 +1865,27 @@ function bindEvents() {
   });
 
   document.querySelectorAll('.modal-close').forEach(button => {
-    button.addEventListener('click', (e) => e.target.closest('.modal').classList.remove('show'));
+    button.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const modal = e.currentTarget.closest('.modal');
+      if (modal?.id === 'socialModal') closeSocialModal();
+      else if (modal) {
+        modal.classList.remove('show');
+        modal.setAttribute('aria-hidden', 'true');
+      }
+    });
+  });
+
+  document.getElementById('socialModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'socialModal') closeSocialModal();
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const modal = document.getElementById('socialModal');
+      if (modal?.classList.contains('show')) closeSocialModal();
+    }
   });
   document.getElementById('socialModalClose')?.addEventListener('click', closeSocialModal);
 }
@@ -3040,6 +3060,82 @@ body.modal-open { overflow: hidden; }
 @media (max-width: 480px) {
   .social-modal-card { width: calc(100vw - 24px); max-height: calc(100vh - 48px); padding: 18px; }
   .social-modal-actions { position: sticky; bottom: 0; padding-top: 10px; background: var(--bg-elevated); }
+}
+</style>
+
+<style id="social-modal-final-style">
+/* Modal social: centralizado de verdade e clicável */
+.social-modal {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 20px !important;
+  box-sizing: border-box !important;
+  background: rgba(10, 8, 18, 0.78) !important;
+  backdrop-filter: blur(5px) !important;
+  -webkit-backdrop-filter: blur(5px) !important;
+  z-index: 100000 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  visibility: hidden !important;
+  transition: opacity .18s ease, visibility .18s ease !important;
+}
+.social-modal.show {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  visibility: visible !important;
+}
+.social-modal .social-modal-card {
+  position: relative !important;
+  width: min(460px, calc(100vw - 40px)) !important;
+  max-width: 460px !important;
+  max-height: min(620px, calc(100vh - 40px)) !important;
+  overflow: auto !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  padding: 22px !important;
+  background: var(--bg-elevated) !important;
+  border: 1px solid var(--border-soft) !important;
+  border-radius: 18px !important;
+  box-shadow: 0 24px 70px rgba(0,0,0,.45) !important;
+  transform: translateY(0) !important;
+}
+.social-modal .modal-close {
+  position: absolute !important;
+  top: 10px !important;
+  right: 10px !important;
+  width: 32px !important;
+  height: 32px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 50% !important;
+  background: transparent !important;
+  color: var(--text-tertiary) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  cursor: pointer !important;
+  z-index: 100001 !important;
+}
+.social-modal .modal-close:hover {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+}
+.social-modal .social-modal-title {
+  padding-right: 40px !important;
+}
+body.modal-open { overflow: hidden !important; }
+@media (max-width: 600px) {
+  .social-modal { padding: 12px !important; }
+  .social-modal .social-modal-card {
+    width: calc(100vw - 24px) !important;
+    max-height: calc(100vh - 24px) !important;
+    padding: 20px !important;
+  }
 }
 </style>
 </head>
