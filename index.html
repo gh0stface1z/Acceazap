@@ -47,6 +47,13 @@ const usersRef = dbRef(db, USERS_PATH);
 const roomRef = dbRef(db, ROOM_PATH);
 const typingRef = dbRef(db, TYPING_PATH);
 
+// Social data in Firebase
+const FRIEND_REQUESTS_PATH = "friendRequests";
+const FRIENDSHIPS_PATH = "friendships";
+const friendRequestsRef = dbRef(db, FRIEND_REQUESTS_PATH);
+const friendshipsRef = dbRef(db, FRIENDSHIPS_PATH);
+let socialFirebaseUnsubs = [];
+
 const EMOJI_SET = ["👍","❤️","😂","😮","😢","🙏","🔥","🎉","👀","💯"];
 
 // GIPHY API
@@ -492,81 +499,152 @@ function isIncoming(username) {
   return state.social.incoming.includes(mkKey(username));
 }
 
-function persistIncomingRequest(recipient, sender) {
-  const key = socialStorageKey(recipient);
-  const target = loadSocialState(recipient);
-  const senderKey = mkKey(sender);
-  if (!target.incoming.includes(senderKey)) {
-    target.incoming.push(senderKey);
-    localStorage.setItem(key, JSON.stringify(target));
-  }
+function friendshipKey(a, b) {
+  return [mkKey(a), mkKey(b)].sort().join('__');
 }
 
-function removeIncomingRequest(recipient, sender) {
-  const target = loadSocialState(recipient);
-  target.incoming = target.incoming.filter(x => x !== mkKey(sender));
-  saveSocialStateForUser(recipient, target);
+function clearSocialFirebaseListeners() {
+  socialFirebaseUnsubs.forEach(unsub => {
+    try { unsub(); } catch {}
+  });
+  socialFirebaseUnsubs = [];
 }
 
-function addFriendRequest(username) {
+function applyFriendshipsSnapshot(snapshot) {
+  const me = mkKey(state.currentUser?.name);
+  if (!me) return;
+  const data = snapshot.exists() ? snapshot.val() : {};
+  const friends = [];
+  Object.values(data || {}).forEach(pair => {
+    const a = mkKey(pair?.a);
+    const b = mkKey(pair?.b);
+    if (a === me && b) friends.push(b);
+    else if (b === me && a) friends.push(a);
+  });
+  state.social.friends = [...new Set(friends)].sort();
+  saveSocialState();
+  renderFriendsUI();
+  renderConversationList();
+}
+
+function applyIncomingRequestsSnapshot(snapshot) {
+  const data = snapshot.exists() ? snapshot.val() : {};
+  state.social.incoming = Object.keys(data || {}).map(mkKey).filter(Boolean).sort();
+  saveSocialState();
+  renderFriendsUI();
+}
+
+function attachSocialFirebaseListeners() {
+  clearSocialFirebaseListeners();
+  const me = mkKey(state.currentUser?.name);
+  if (!me) return;
+
+  const incomingRef = dbRef(db, `${FRIEND_REQUESTS_PATH}/${me}`);
+  socialFirebaseUnsubs.push(onValue(incomingRef, applyIncomingRequestsSnapshot, (error) => {
+    console.warn('Não foi possível ler solicitações de amizade:', error);
+  }));
+
+  socialFirebaseUnsubs.push(onValue(friendshipsRef, applyFriendshipsSnapshot, (error) => {
+    console.warn('Não foi possível ler amizades do Firebase:', error);
+  }));
+}
+
+async function addFriendRequest(username) {
   const target = mkKey(username);
   const me = mkKey(state.currentUser?.name);
   if (!target || target === me) {
     showNotification('Digite outra pessoa além de você.', 'warning');
     return;
   }
-  if (isFriend(target)) {
-    showNotification('Essa pessoa já está nos seus amigos.', 'info');
-    return;
-  }
-  if (isIncoming(target)) {
-    acceptFriend(target);
-    return;
-  }
-  if (isOutgoing(target)) {
-    showNotification('Solicitação já enviada.', 'info');
+  if (!state.currentUser?.uid) {
+    showNotification('Sua sessão ainda não está pronta.', 'warning');
     return;
   }
 
-  state.social.outgoing.push(target);
-  saveSocialState();
-  persistIncomingRequest(target, me);
-  renderFriendsUI();
-  renderConversationList();
-  showNotification(`Solicitação enviada para ${target}.`, 'success');
+  try {
+    const targetSnap = await get(child(usersRef, target));
+    if (!targetSnap.exists()) {
+      showNotification(`O usuário @${target} não existe.`, 'warning');
+      return;
+    }
+
+    const pairSnap = await get(child(friendshipsRef, friendshipKey(me, target)));
+    if (pairSnap.exists()) {
+      showNotification('Essa pessoa já está nos seus amigos.', 'info');
+      return;
+    }
+
+    const requestPath = `${FRIEND_REQUESTS_PATH}/${target}/${me}`;
+    const requestSnap = await get(dbRef(db, requestPath));
+    if (requestSnap.exists()) {
+      showNotification('Solicitação já enviada.', 'info');
+      return;
+    }
+
+    await set(dbRef(db, requestPath), {
+      from: me,
+      to: target,
+      createdAt: serverTimestamp()
+    });
+
+    // Mantém um pequeno cache local para a UI continuar instantânea.
+    if (!state.social.outgoing.includes(target)) state.social.outgoing.push(target);
+    saveSocialState();
+    renderFriendsUI();
+    renderConversationList();
+    showNotification(`Solicitação enviada para ${target}.`, 'success');
+  } catch (error) {
+    console.error(error);
+    showNotification('Não foi possível enviar a solicitação. Verifique a conexão com o Firebase.', 'error');
+  }
 }
 
-function acceptFriend(username) {
+async function acceptFriend(username) {
   const target = mkKey(username);
   const me = mkKey(state.currentUser?.name);
   if (!target || !me) return;
 
-  if (!state.social.friends.includes(target)) state.social.friends.push(target);
-  state.social.incoming = state.social.incoming.filter(x => x !== target);
-  state.social.outgoing = state.social.outgoing.filter(x => x !== target);
-  saveSocialState();
+  try {
+    const requestSnap = await get(dbRef(db, `${FRIEND_REQUESTS_PATH}/${me}/${target}`));
+    if (!requestSnap.exists()) {
+      showNotification('Essa solicitação não está mais disponível.', 'warning');
+      return;
+    }
 
-  const other = loadSocialState(target);
-  if (!other.friends.includes(me)) other.friends.push(me);
-  other.outgoing = other.outgoing.filter(x => x !== me);
-  other.incoming = other.incoming.filter(x => x !== me);
-  saveSocialStateForUser(target, other);
-  removeIncomingRequest(me, target);
+    await set(dbRef(db, `${FRIENDSHIPS_PATH}/${friendshipKey(me, target)}`), {
+      a: [me, target].sort()[0],
+      b: [me, target].sort()[1],
+      createdAt: serverTimestamp()
+    });
+    await remove(dbRef(db, `${FRIEND_REQUESTS_PATH}/${me}/${target}`));
 
-  renderFriendsUI();
-  renderConversationList();
-  showNotification(`${target} agora é seu amigo.`, 'success');
+    state.social.incoming = state.social.incoming.filter(x => x !== target);
+    state.social.outgoing = state.social.outgoing.filter(x => x !== target);
+    saveSocialState();
+    renderFriendsUI();
+    renderConversationList();
+    showNotification(`${target} agora é seu amigo.`, 'success');
+  } catch (error) {
+    console.error(error);
+    showNotification('Não foi possível aceitar a solicitação.', 'error');
+  }
 }
 
-function declineFriend(username) {
+async function declineFriend(username) {
   const target = mkKey(username);
-  state.social.incoming = state.social.incoming.filter(x => x !== target);
-  saveSocialState();
-  const other = loadSocialState(target);
-  other.outgoing = other.outgoing.filter(x => x !== mkKey(state.currentUser?.name));
-  saveSocialStateForUser(target, other);
-  removeIncomingRequest(state.currentUser.name, target);
-  renderFriendsUI();
+  const me = mkKey(state.currentUser?.name);
+  if (!target || !me) return;
+
+  try {
+    await remove(dbRef(db, `${FRIEND_REQUESTS_PATH}/${me}/${target}`));
+    state.social.incoming = state.social.incoming.filter(x => x !== target);
+    saveSocialState();
+    renderFriendsUI();
+    showNotification('Solicitação recusada.', 'info');
+  } catch (error) {
+    console.error(error);
+    showNotification('Não foi possível recusar a solicitação.', 'error');
+  }
 }
 
 function openFriendModal() {
@@ -587,9 +665,15 @@ function openFriendModal() {
   document.body.classList.add('modal-open');
   setTimeout(() => document.getElementById('friendUsernameInput')?.focus(), 30);
   document.getElementById('closeSocialModalBtn')?.addEventListener('click', closeSocialModal, { once: true });
-  document.getElementById('sendFriendRequestBtn')?.addEventListener('click', () => {
-    addFriendRequest(document.getElementById('friendUsernameInput')?.value || '');
-    closeSocialModal();
+  document.getElementById('sendFriendRequestBtn')?.addEventListener('click', async () => {
+    const button = document.getElementById('sendFriendRequestBtn');
+    const username = document.getElementById('friendUsernameInput')?.value || '';
+    if (button) button.disabled = true;
+    await addFriendRequest(username);
+    if (button) button.disabled = false;
+    if (isFriend(username) || isOutgoing(username) || state.social.outgoing.includes(mkKey(username))) {
+      closeSocialModal();
+    }
   }, { once: true });
   document.getElementById('friendUsernameInput')?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('sendFriendRequestBtn')?.click();
@@ -2057,6 +2141,7 @@ async function login(username, password) {
 }
 
 async function logout() {
+  clearSocialFirebaseListeners();
   try {
     await signOutAuth();
   } catch {}
@@ -2103,6 +2188,7 @@ async function initChatUI(user) {
 
   state.social = loadSocialState(user.name);
   ensureChat('g:accea-geral', { type: 'group', name: 'ACCEA', participants: [] });
+  attachSocialFirebaseListeners();
   updateUsersUI();
   buildEmojiPicker();
   bindGifPicker();
@@ -2169,6 +2255,13 @@ window.addEventListener("load", async () => {
 
   bindEvents();
   bindGifPicker();
+
+  onValue(usersRef, (snapshot) => {
+    state.userMap = snapshot.exists() ? snapshot.val() : state.userMap;
+    updateUsersUI();
+  }, (error) => {
+    console.warn('Não foi possível carregar usuários do Firebase:', error);
+  });
 
   onAuthStateChanged(auth, async (firebaseUser) => {
     if (authBootstrapping) return;
