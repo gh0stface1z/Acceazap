@@ -3280,7 +3280,7 @@ body.modal-open { overflow: hidden !important; }
     <button id="loginButton" class="btn-primary">
       <span>Entrar</span><i class="fas fa-arrow-right"></i>
     </button>
-    <button id="registerButton" type="button" class="btn-small btn-secondary" style="width:100%; margin-top:10px;" onclick="window.ACCEA_REGISTER()">
+    <button id="registerButton" type="button" class="btn-small btn-secondary" style="width:100%; margin-top:10px;" >
       Criar conta
     </button>
   </div>
@@ -3433,12 +3433,126 @@ body.modal-open { overflow: hidden !important; }
 </div>
 
 
-<script>
-// Fallback simples: se o navegador restaurar o botão como desabilitado, reativa ao carregar.
-window.addEventListener("load", () => {
-  const button = document.getElementById("registerButton");
-  if (button) button.disabled = false;
-});
+
+
+
+<script id="accea-register-fallback">
+(function () {
+  const API_KEY = "AIzaSyBg8hTrPFUdJk3Ryb0a_guXzfzn4vdoGDU";
+  const SIGNUP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + encodeURIComponent(API_KEY);
+
+  function normalizeUsername(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function toast(message, type) {
+    try {
+      if (typeof window.showNotification === "function") {
+        window.showNotification(message, type || "info");
+        return;
+      }
+    } catch (_) {}
+
+    let box = document.getElementById("accea-direct-toast");
+    if (!box) {
+      box = document.createElement("div");
+      box.id = "accea-direct-toast";
+      box.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:999999;max-width:90vw;padding:12px 16px;border-radius:10px;background:#1b2230;color:#fff;font:14px Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35);text-align:center;";
+      document.body.appendChild(box);
+    }
+    box.textContent = message;
+    box.style.display = "block";
+    clearTimeout(box._timer);
+    box._timer = setTimeout(() => { box.style.display = "none"; }, 3500);
+  }
+
+  function firebaseErrorMessage(code) {
+    const map = {
+      "EMAIL_EXISTS": "Esse nome de usuário já está em uso.",
+      "INVALID_EMAIL": "Nome de usuário inválido.",
+      "WEAK_PASSWORD : Password should be at least 6 characters": "A senha precisa ter pelo menos 6 caracteres.",
+      "TOO_MANY_ATTEMPTS_TRY_LATER": "Muitas tentativas. Espere um pouco e tente novamente.",
+      "OPERATION_NOT_ALLOWED": "O login por e-mail e senha não está ativado no Firebase."
+    };
+    return map[code] || "Não foi possível criar a conta. Verifique o Firebase e tente novamente.";
+  }
+
+  async function createAccountDirect() {
+    const usernameInput = document.getElementById("usernameLogin");
+    const passwordInput = document.getElementById("passLogin");
+    const button = document.getElementById("registerButton");
+    const username = normalizeUsername(usernameInput && usernameInput.value);
+    const password = String((passwordInput && passwordInput.value) || "");
+
+    if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
+      toast("Use 3 a 30 caracteres: letras, números, ponto, _ ou -.", "warning");
+      if (usernameInput) usernameInput.focus();
+      return;
+    }
+    if (password.length < 6) {
+      toast("A senha precisa ter pelo menos 6 caracteres.", "warning");
+      if (passwordInput) passwordInput.focus();
+      return;
+    }
+
+    const email = username.replace(/[^a-z0-9._-]/g, "_") + "@accea.app";
+    if (button) {
+      button.disabled = true;
+      button.dataset.oldText = button.textContent;
+      button.textContent = "Criando...";
+    }
+
+    try {
+      const response = await fetch(SIGNUP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, returnSecureToken: true })
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const code = data?.error?.message || "UNKNOWN_ERROR";
+        throw new Error(code);
+      }
+
+      // Guarda somente uma indicação local do último nome criado. A senha nunca é salva aqui.
+      sessionStorage.setItem("accea_last_registered", username);
+      toast("Conta @" + username + " criada com sucesso. Agora clique em Entrar.", "success");
+      if (passwordInput) passwordInput.value = "";
+      if (usernameInput) usernameInput.focus();
+    } catch (error) {
+      toast(firebaseErrorMessage(error?.message || ""), "error");
+      console.error("ACCEA cadastro direto:", error);
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = button.dataset.oldText || "Criar conta";
+      }
+    }
+  }
+
+  window.ACCEA_REGISTER = createAccountDirect;
+
+  function bindRegisterButton() {
+    const button = document.getElementById("registerButton");
+    if (!button || button.dataset.acceaBound === "1") return;
+    button.dataset.acceaBound = "1";
+    button.type = "button";
+    button.disabled = false;
+    button.addEventListener("click", function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      createAccountDirect();
+    });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bindRegisterButton, { once: true });
+  } else {
+    bindRegisterButton();
+  }
+  window.addEventListener("load", bindRegisterButton, { once: true });
+})();
 </script>
 
 </body>
