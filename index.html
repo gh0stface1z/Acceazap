@@ -1922,6 +1922,9 @@ function firebaseAuthMessage(error) {
   const messages = {
     'auth/email-already-in-use': 'Esse nome de usuário já está em uso.',
     'auth/invalid-credential': 'Nome de usuário ou senha incorretos.',
+    'auth/invalid-login-credentials': 'Nome de usuário ou senha incorretos.',
+    'auth/user-not-found': 'Nome de usuário ou senha incorretos.',
+    'auth/wrong-password': 'Nome de usuário ou senha incorretos.',
     'auth/invalid-email': 'Nome de usuário inválido.',
     'auth/weak-password': 'A senha precisa ter pelo menos 6 caracteres.',
     'auth/network-request-failed': 'Sem conexão com o Firebase.',
@@ -1929,6 +1932,23 @@ function firebaseAuthMessage(error) {
     'auth/operation-not-allowed': 'O login por e-mail e senha não está ativado no Firebase.'
   };
   return messages[code] || `Não foi possível concluir a operação (${code || 'erro desconhecido'}).`;
+}
+
+function showLoginMessage(message, type = 'error') {
+  const el = document.getElementById('loginMessage');
+  if (!el) return;
+  el.textContent = message;
+  el.style.display = 'block';
+  el.style.background = type === 'success' ? 'rgba(34,197,94,.12)' : type === 'warning' ? 'rgba(245,158,11,.12)' : 'rgba(239,68,68,.12)';
+  el.style.color = type === 'success' ? '#22c55e' : type === 'warning' ? '#f59e0b' : '#ef4444';
+  el.style.border = `1px solid ${type === 'success' ? 'rgba(34,197,94,.28)' : type === 'warning' ? 'rgba(245,158,11,.28)' : 'rgba(239,68,68,.28)'}`;
+}
+
+function clearLoginMessage() {
+  const el = document.getElementById('loginMessage');
+  if (!el) return;
+  el.textContent = '';
+  el.style.display = 'none';
 }
 
 async function registerAccount(username, password) {
@@ -1999,9 +2019,10 @@ window.ACCEA_REGISTER = function () {
 };
 
 async function login(username, password) {
+  clearLoginMessage();
   const name = mkKey(username);
   if (!name || !password) {
-    showNotification('Digite seu nome e sua senha.', 'error');
+    showLoginMessage('Digite seu nome de usuário e sua senha.', 'warning');
     return;
   }
 
@@ -2025,9 +2046,10 @@ async function login(username, password) {
 
     const user = { name, role, uid: credential.user.uid };
     sessionStorage.setItem('kikochat_user', JSON.stringify(user));
+    clearLoginMessage();
     await initChatUI(user);
   } catch (error) {
-    showNotification(firebaseAuthMessage(error), 'error');
+    showLoginMessage(firebaseAuthMessage(error), 'error');
   } finally {
     elements.loginButton.disabled = false;
     elements.loginButton.innerHTML = '<span>Entrar</span><i class="fas fa-arrow-right"></i>';
@@ -3283,6 +3305,8 @@ body.modal-open { overflow: hidden !important; }
     <button id="registerButton" type="button" class="btn-small btn-secondary" style="width:100%; margin-top:10px;" >
       Criar conta
     </button>
+
+    <div id="loginMessage" role="status" aria-live="polite" style="display:none; margin-top:10px; text-align:center; font-size:13px; line-height:1.35; padding:9px 10px; border-radius:10px;"></div>
   </div>
 </div>
 
