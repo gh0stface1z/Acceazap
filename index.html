@@ -37,6 +37,10 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
 
+// Expose only the Firebase handles needed by the independent social controls.
+// This lets the friend UI keep working even if another app initialization path fails.
+window.ACCEA_FIREBASE = { auth, db, dbRef, get, set, remove, child };
+
 // Database paths
 const USERS_PATH = "users";
 const ROOM_PATH = "rooms/room1/messages";
@@ -3558,64 +3562,18 @@ body.modal-open { overflow: hidden !important; }
 
 <script id="accea-social-button-fallback">
 (function(){
-  function bindSocialButtons(){
-    // Capturing listener makes these controls work even if another initialization
-    // error prevented the original bindEvents() listener from being attached.
-    if (window.__acceaSocialFallbackBound) return;
-    window.__acceaSocialFallbackBound = true;
+  const DB_ROOT = 'https://accea-ee9d8-default-rtdb.firebaseio.com';
+  const FRIEND_REQUESTS = 'friendRequests';
+  const FRIENDSHIPS = 'friendships';
+  const USERS = 'users';
 
-    document.addEventListener('click', async function(event){
-      const addFriend = event.target.closest('#addFriendBtn');
-      const sendFriend = event.target.closest('#sendFriendRequestBtn');
-
-      if (addFriend) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        if (window.ACCEA?.openFriendModal) window.ACCEA.openFriendModal();
-        return;
-      }
-
-      if (sendFriend) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-
-        const input = document.getElementById('friendUsernameInput');
-        const button = document.getElementById('sendFriendRequestBtn');
-        const username = input?.value || '';
-        const normalized = String(username).trim().toLowerCase();
-        if (!normalized) {
-          showFriendStatus('Digite o nome de usuário.', 'warning');
-          input?.focus();
-          return;
-        }
-        if (!window.ACCEA?.addFriendRequest) {
-          showFriendStatus('O ACCEA ainda está carregando. Tente novamente em um instante.', 'error');
-          return;
-        }
-
-        if (button) {
-          button.disabled = true;
-          button.dataset.oldText = button.textContent;
-          button.textContent = 'Enviando...';
-        }
-
-        try {
-          const ok = await window.ACCEA.addFriendRequest(normalized);
-          if (ok) {
-            showFriendStatus('Solicitação enviada.', 'success');
-            document.getElementById('socialModal')?.classList.remove('show');
-            document.getElementById('socialModal')?.setAttribute('aria-hidden','true');
-            document.body.classList.remove('modal-open');
-          }
-        } finally {
-          if (button) {
-            button.disabled = false;
-            button.textContent = button.dataset.oldText || 'Adicionar';
-          }
-        }
-      }
-    }, true);
+  function sessionUser(){
+    try { return JSON.parse(sessionStorage.getItem('kikochat_user') || 'null'); }
+    catch (_) { return null; }
   }
+
+  function norm(v){ return String(v || '').trim().toLowerCase(); }
+  function keyPair(a,b){ return [norm(a), norm(b)].sort().join('__'); }
 
   function showFriendStatus(message, type){
     let box = document.getElementById('accea-friend-status');
@@ -3629,12 +3587,181 @@ body.modal-open { overflow: hidden !important; }
     box.style.border = type === 'success' ? '1px solid rgba(34,197,94,.45)' : type === 'warning' ? '1px solid rgba(245,158,11,.45)' : '1px solid rgba(239,68,68,.45)';
     box.style.display = 'block';
     clearTimeout(box._timer);
-    box._timer = setTimeout(() => { box.style.display = 'none'; }, 3200);
+    box._timer = setTimeout(() => { box.style.display = 'none'; }, 3500);
   }
 
-  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindSocialButtons, {once:true});
-  else bindSocialButtons();
-  window.addEventListener('load', bindSocialButtons, {once:true});
+  function setModal(open){
+    const modal = document.getElementById('socialModal');
+    if (!modal) return;
+    modal.classList.toggle('show', !!open);
+    modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+    document.body.classList.toggle('modal-open', !!open);
+  }
+
+  function openIndependentFriendModal(){
+    const modal = document.getElementById('socialModal');
+    const title = document.getElementById('socialModalTitle');
+    const body = document.getElementById('socialModalBody');
+    if (!modal || !title || !body) {
+      showFriendStatus('Não foi possível abrir a janela de amizade.', 'error');
+      return;
+    }
+    title.textContent = 'Adicionar amigo';
+    body.innerHTML = `
+      <div class="social-modal-copy">Digite exatamente o nome de usuário da pessoa.</div>
+      <input id="friendUsernameInput" class="admin-input social-modal-input" placeholder="Nome de usuário" autocomplete="off" />
+      <div class="social-modal-actions">
+        <button id="closeSocialModalBtn" class="btn-small btn-secondary" type="button">Cancelar</button>
+        <button id="sendFriendRequestBtn" class="btn-small btn-primary" type="button">Adicionar</button>
+      </div>`;
+    setModal(true);
+    setTimeout(() => document.getElementById('friendUsernameInput')?.focus(), 30);
+  }
+
+  async function dbRequest(path, method, token, body){
+    const url = `${DB_ROOT}/${path}.json?auth=${encodeURIComponent(token)}`;
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.error || `HTTP_${res.status}`);
+    return data;
+  }
+
+  async function sendIndependentFriendRequest(){
+    const input = document.getElementById('friendUsernameInput');
+    const button = document.getElementById('sendFriendRequestBtn');
+    const target = norm(input?.value);
+    const me = norm(sessionUser()?.name);
+
+    if (!target) {
+      showFriendStatus('Digite o nome de usuário.', 'warning');
+      input?.focus();
+      return;
+    }
+    if (!me) {
+      showFriendStatus('Entre na sua conta antes de adicionar alguém.', 'warning');
+      return;
+    }
+    if (target === me) {
+      showFriendStatus('Você não pode adicionar você mesma.', 'warning');
+      return;
+    }
+
+    const fb = window.ACCEA_FIREBASE;
+    const current = fb?.auth?.currentUser;
+    if (!current) {
+      showFriendStatus('Sua sessão do Firebase ainda não está pronta. Atualize a página e entre novamente.', 'error');
+      return;
+    }
+
+    if (button) {
+      button.disabled = true;
+      button.dataset.oldText = button.textContent;
+      button.textContent = 'Enviando...';
+    }
+
+    try {
+      const token = await current.getIdToken();
+      const targetUser = await dbRequest(`${USERS}/${encodeURIComponent(target)}`, 'GET', token);
+      if (!targetUser) {
+        showFriendStatus(`O usuário @${target} não existe.`, 'warning');
+        return;
+      }
+
+      const friendship = await dbRequest(`${FRIENDSHIPS}/${keyPair(me,target)}`, 'GET', token);
+      if (friendship) {
+        showFriendStatus('Essa pessoa já está nos seus amigos.', 'info');
+        setModal(false);
+        return;
+      }
+
+      const existing = await dbRequest(`${FRIEND_REQUESTS}/${encodeURIComponent(target)}/${encodeURIComponent(me)}`, 'GET', token);
+      if (existing) {
+        showFriendStatus('Você já enviou uma solicitação para essa pessoa.', 'info');
+        setModal(false);
+        return;
+      }
+
+      await dbRequest(`${FRIEND_REQUESTS}/${encodeURIComponent(target)}/${encodeURIComponent(me)}`, 'PUT', token, {
+        from: me,
+        to: target,
+        createdAt: Date.now()
+      });
+
+      showFriendStatus(`Solicitação enviada para @${target}.`, 'success');
+      setModal(false);
+
+      // Keep the local UI in sync when the main app is available.
+      if (window.ACCEA?.addFriendRequest) {
+        try {
+          if (window.ACCEA?.state?.social) {
+            // no-op: the Firebase listener will update it; do not send a second request.
+          }
+        } catch (_) {}
+      }
+    } catch (error) {
+      console.error('ACCEA amizade:', error);
+      const msg = String(error?.message || '');
+      if (msg.includes('PERMISSION_DENIED')) {
+        showFriendStatus('O Firebase recusou o acesso. Publique as regras do Realtime Database.', 'error');
+      } else {
+        showFriendStatus('Não foi possível enviar a solicitação. Verifique sua conexão.', 'error');
+      }
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.textContent = button.dataset.oldText || 'Adicionar';
+      }
+    }
+  }
+
+  function bind(){
+    if (window.__acceaSocialFallbackBoundV2) return;
+    window.__acceaSocialFallbackBoundV2 = true;
+
+    document.addEventListener('click', function(event){
+      const add = event.target.closest('#addFriendBtn');
+      const send = event.target.closest('#sendFriendRequestBtn');
+      const close = event.target.closest('#closeSocialModalBtn, #socialModalClose');
+      const modal = event.target.closest('#socialModal');
+
+      if (add) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        openIndependentFriendModal();
+        return;
+      }
+      if (send) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        sendIndependentFriendRequest();
+        return;
+      }
+      if (close) {
+        event.preventDefault();
+        setModal(false);
+        return;
+      }
+      if (modal && event.target === modal) {
+        setModal(false);
+      }
+    }, true);
+
+    document.addEventListener('keydown', function(event){
+      if (event.key === 'Escape') setModal(false);
+      if (event.key === 'Enter' && document.activeElement?.id === 'friendUsernameInput') {
+        event.preventDefault();
+        sendIndependentFriendRequest();
+      }
+    }, true);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind, {once:true});
+  else bind();
+  window.addEventListener('load', bind, {once:true});
 })();
 </script>
 
