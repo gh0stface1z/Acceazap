@@ -568,7 +568,7 @@ async function addFriendRequest(username) {
   try {
     const targetSnap = await get(child(usersRef, target));
     if (!targetSnap.exists()) {
-      showNotification(`O usuário @${target} não existe.`, 'warning');
+      showNotification(`A conta @${target} ainda não está sincronizada. Peça para a pessoa entrar novamente no ACCEA.`, 'warning');
       return false;
     }
 
@@ -2041,6 +2041,33 @@ function clearLoginMessage() {
   el.style.display = 'none';
 }
 
+// Garante que toda conta autenticada tenha também um perfil em /users no Realtime Database.
+// Isso repara contas antigas que foram criadas no Authentication antes da integração do perfil.
+async function ensureUserProfile(username, uid, role = 'user') {
+  const name = mkKey(username);
+  if (!name || !uid) throw new Error('Dados do usuário incompletos.');
+
+  const userRef = child(usersRef, name);
+  const snapshot = await get(userRef);
+  const existing = snapshot.exists() ? (snapshot.val() || {}) : {};
+
+  const profile = existing.profile || {};
+  const patch = {
+    role: existing.role || role || 'user',
+    authUid: uid,
+    'profile/avatarColor': profile.avatarColor || colorFromName(name),
+    'profile/avatarUrl': profile.avatarUrl || getProfilePhoto(name),
+    'profile/status': profile.status || 'Disponível'
+  };
+
+  if (!existing.profile?.joinDate) {
+    patch['profile/joinDate'] = serverTimestamp();
+  }
+
+  await update(userRef, patch);
+  return { name, role: patch.role, uid };
+}
+
 async function registerAccount(username, password) {
   const name = mkKey(username);
 
@@ -2069,25 +2096,9 @@ async function registerAccount(username, password) {
       password
     );
 
-    const user = { name, role: 'user', uid: credential.user.uid };
+    // O cadastro só é considerado concluído depois que o perfil também existe em /users.
+    const user = await ensureUserProfile(name, credential.user.uid, 'user');
     sessionStorage.setItem('kikochat_user', JSON.stringify(user));
-
-    // Salva o perfil no Realtime Database. Se as regras do banco ainda estiverem
-    // bloqueadas, a conta do Authentication continua criada e o usuário consegue entrar.
-    try {
-      await set(child(usersRef, name), {
-        role: 'user',
-        authUid: credential.user.uid,
-        profile: {
-          avatarColor: colorFromName(name),
-          avatarUrl: getProfilePhoto(name),
-          status: 'Disponível',
-          joinDate: serverTimestamp()
-        }
-      });
-    } catch (dbError) {
-      console.warn('Conta criada no Authentication, mas o perfil ainda não foi salvo no Database:', dbError);
-    }
 
     showNotification(`Conta @${name} criada.`, 'success');
     await initChatUI(user);
@@ -2126,15 +2137,9 @@ async function login(username, password) {
       password
     );
 
-    let role = 'user';
-    try {
-      const snapshot = await get(child(usersRef, name));
-      if (snapshot.exists()) role = snapshot.val().role || 'user';
-    } catch (dbError) {
-      console.warn('Login autenticado; perfil do Database ainda indisponível:', dbError);
-    }
-
-    const user = { name, role, uid: credential.user.uid };
+    // Repara automaticamente contas antigas que existem no Authentication, mas
+    // ainda não tinham sido criadas em /users.
+    const user = await ensureUserProfile(name, credential.user.uid, 'user');
     sessionStorage.setItem('kikochat_user', JSON.stringify(user));
     clearLoginMessage();
     await initChatUI(user);
@@ -2158,6 +2163,16 @@ async function logout() {
 // Chat UI initialization
 async function initChatUI(user) {
   state.currentUser = user;
+
+  if (user?.uid && user?.name) {
+    try {
+      const repaired = await ensureUserProfile(user.name, user.uid, user.role || 'user');
+      user.role = repaired.role;
+      sessionStorage.setItem('kikochat_user', JSON.stringify(user));
+    } catch (profileError) {
+      console.warn('Não foi possível sincronizar o perfil no Firebase:', profileError);
+    }
+  }
 
   if (!state.userMap[user.name]) {
     state.userMap[user.name] = {
@@ -2282,7 +2297,9 @@ window.addEventListener("load", async () => {
         const user = JSON.parse(storedUser);
         if (!user.uid || user.uid === firebaseUser.uid) {
           user.uid = firebaseUser.uid;
-          await initChatUI(user);
+          const repaired = await ensureUserProfile(user.name, firebaseUser.uid, user.role || 'user');
+          sessionStorage.setItem("kikochat_user", JSON.stringify(repaired));
+          await initChatUI(repaired);
           return;
         }
       }
@@ -2300,10 +2317,14 @@ window.addEventListener("load", async () => {
       }
 
       if (found) {
-        sessionStorage.setItem("kikochat_user", JSON.stringify(found));
-        await initChatUI(found);
+        const repaired = await ensureUserProfile(found.name, firebaseUser.uid, found.role || 'user');
+        sessionStorage.setItem("kikochat_user", JSON.stringify(repaired));
+        await initChatUI(repaired);
       } else {
-        await signOutAuth();
+        // Conta autenticada que ainda não tem perfil no banco. Não desconecta à toa:
+        // o nome está no sessionStorage quando disponível; caso contrário, não há como
+        // reconstruí-lo com segurança neste cliente.
+        console.warn('Conta autenticada sem perfil em /users.');
       }
     } catch (error) {
       console.error('Falha ao restaurar sessão:', error);
