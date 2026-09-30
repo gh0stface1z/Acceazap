@@ -2144,9 +2144,15 @@ async function login(username, password) {
       password
     );
 
-    // Repara automaticamente contas antigas que existem no Authentication, mas
-    // ainda não tinham sido criadas em /users.
-    const user = await ensureUserProfile(name, credential.user.uid, 'user');
+    // O Authentication já confirmou a conta. Não tentamos escrever em /users aqui,
+    // porque as regras do Realtime Database podem bloquear uma escrita durante o login.
+    // O perfil já é criado no cadastro; a inicialização da interface apenas tenta
+    // sincronizá-lo sem impedir a entrada.
+    const user = {
+      name,
+      role: 'user',
+      uid: credential.user.uid
+    };
     sessionStorage.setItem('kikochat_user', JSON.stringify(user));
     clearLoginMessage();
     await initChatUI(user);
