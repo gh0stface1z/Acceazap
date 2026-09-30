@@ -3661,7 +3661,25 @@ body.modal-open { overflow: hidden !important; }
     const input = document.getElementById('friendUsernameInput');
     const button = document.getElementById('sendFriendRequestBtn');
     const target = norm(input?.value);
-    const me = norm(sessionUser()?.name);
+
+    // A identidade do usuário deve vir do Firebase Auth, não apenas do
+    // sessionStorage. Assim a área social continua funcionando mesmo se a
+    // restauração visual da sessão ainda não terminou.
+    const fb = window.ACCEA_FIREBASE;
+    let current = fb?.auth?.currentUser || null;
+    if (!current && fb?.auth) {
+      const startedAt = Date.now();
+      while (!current && Date.now() - startedAt < 5000) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        current = fb.auth.currentUser || null;
+      }
+    }
+
+    let me = norm(sessionUser()?.name);
+    if (!me && current?.email) {
+      const emailName = String(current.email).split('@')[0];
+      if (emailName) me = norm(emailName);
+    }
 
     if (!target) {
       showFriendStatus('Digite o nome de usuário.', 'warning');
@@ -3677,21 +3695,7 @@ body.modal-open { overflow: hidden !important; }
       return;
     }
 
-    const fb = window.ACCEA_FIREBASE;
-    let current = fb?.auth?.currentUser || null;
-
-    // Logo após o login, o Firebase pode levar alguns milissegundos para
-    // refletir o usuário em auth.currentUser. Não tratamos essa janela como
-    // se a conta tivesse sido desconectada. Humanos já esperam segundos por
-    // elevador; o mínimo que podemos fazer é esperar pelo Firebase.
-    if (!current && fb?.auth) {
-      const startedAt = Date.now();
-      while (!current && Date.now() - startedAt < 5000) {
-        await new Promise(resolve => setTimeout(resolve, 150));
-        current = fb.auth.currentUser || null;
-      }
-    }
-
+    // current já foi resolvido acima a partir do Firebase Auth.
     if (!current) {
       showFriendStatus('O Firebase ainda está sincronizando sua sessão. Tente adicionar novamente em alguns segundos.', 'error');
       return;
