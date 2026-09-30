@@ -3678,9 +3678,22 @@ body.modal-open { overflow: hidden !important; }
     }
 
     const fb = window.ACCEA_FIREBASE;
-    const current = fb?.auth?.currentUser;
+    let current = fb?.auth?.currentUser || null;
+
+    // Logo após o login, o Firebase pode levar alguns milissegundos para
+    // refletir o usuário em auth.currentUser. Não tratamos essa janela como
+    // se a conta tivesse sido desconectada. Humanos já esperam segundos por
+    // elevador; o mínimo que podemos fazer é esperar pelo Firebase.
+    if (!current && fb?.auth) {
+      const startedAt = Date.now();
+      while (!current && Date.now() - startedAt < 5000) {
+        await new Promise(resolve => setTimeout(resolve, 150));
+        current = fb.auth.currentUser || null;
+      }
+    }
+
     if (!current) {
-      showFriendStatus('Sua sessão do Firebase ainda não está pronta. Atualize a página e entre novamente.', 'error');
+      showFriendStatus('O Firebase ainda está sincronizando sua sessão. Tente adicionar novamente em alguns segundos.', 'error');
       return;
     }
 
