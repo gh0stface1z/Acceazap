@@ -44,7 +44,7 @@ setPersistence(auth, browserSessionPersistence).catch(err => console.warn("Persi
 
 // Expose only the Firebase handles needed by the independent social controls.
 // This lets the friend UI keep working even if another app initialization path fails.
-window.ACCEA_FIREBASE = { auth, db, dbRef, get, set, remove, child };
+window.ACCEA_FIREBASE = { auth, db, dbRef, get, set, remove, child, getCurrentUser: () => auth.currentUser };
 
 // Database paths
 const USERS_PATH = "users";
@@ -2340,7 +2340,7 @@ window.addEventListener("load", async () => {
 
 window.ACCEA = {
   sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, registerAccount, setTheme, toggleReaction, openDeleteMenu, deleteForMeOnly, deleteForEveryoneLocal,
-  openFriendModal, addFriendRequest, acceptFriend, declineFriend, openIncomingRequestsModal
+  openFriendModal, addFriendRequest, acceptFriend, declineFriend, openIncomingRequestsModal, getCurrentUser: () => state.currentUser
 };
 
 // Mantém a sessão ao atualizar a página.
@@ -3666,12 +3666,12 @@ body.modal-open { overflow: hidden !important; }
     // sessionStorage. Assim a área social continua funcionando mesmo se a
     // restauração visual da sessão ainda não terminou.
     const fb = window.ACCEA_FIREBASE;
-    let current = fb?.auth?.currentUser || null;
+    let current = fb?.getCurrentUser ? fb.getCurrentUser() : (fb?.auth?.currentUser || null);
     if (!current && fb?.auth) {
       const startedAt = Date.now();
       while (!current && Date.now() - startedAt < 5000) {
         await new Promise(resolve => setTimeout(resolve, 150));
-        current = fb.auth.currentUser || null;
+        current = fb.getCurrentUser ? fb.getCurrentUser() : (fb.auth.currentUser || null);
       }
     }
 
@@ -3679,6 +3679,9 @@ body.modal-open { overflow: hidden !important; }
     if (!me && current?.email) {
       const emailName = String(current.email).split('@')[0];
       if (emailName) me = norm(emailName);
+    }
+    if (!me && window.ACCEA?.getCurrentUser) {
+      me = norm(window.ACCEA.getCurrentUser()?.name);
     }
 
     if (!target) {
