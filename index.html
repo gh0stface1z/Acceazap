@@ -16,7 +16,9 @@ import {
   signInWithEmailAndPassword,
   signOut as signOutAuth,
   onAuthStateChanged,
-  deleteUser
+  deleteUser,
+  setPersistence,
+  browserSessionPersistence
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import {
   getDatabase, ref as dbRef, push, onChildAdded, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp
@@ -36,6 +38,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
+// A sessão do ACCEA não deve ser reutilizada automaticamente em outro navegador/dispositivo.
+// Ela permanece durante a sessão desta aba e é descartada quando a sessão termina.
+setPersistence(auth, browserSessionPersistence).catch(err => console.warn("Persistência do Firebase:", err));
 
 // Expose only the Firebase handles needed by the independent social controls.
 // This lets the friend UI keep working even if another app initialization path fails.
@@ -2050,22 +2055,24 @@ async function ensureUserProfile(username, uid, role = 'user') {
   const userRef = child(usersRef, name);
   const snapshot = await get(userRef);
   const existing = snapshot.exists() ? (snapshot.val() || {}) : {};
+  const existingProfile = existing.profile || {};
 
-  const profile = existing.profile || {};
-  const patch = {
-    role: existing.role || role || 'user',
-    authUid: uid,
-    'profile/avatarColor': profile.avatarColor || colorFromName(name),
-    'profile/avatarUrl': profile.avatarUrl || getProfilePhoto(name),
-    'profile/status': profile.status || 'Disponível'
+  const profile = {
+    ...(existingProfile || {}),
+    avatarColor: existingProfile.avatarColor || colorFromName(name),
+    avatarUrl: existingProfile.avatarUrl || getProfilePhoto(name),
+    status: existingProfile.status || 'Disponível',
+    joinDate: existingProfile.joinDate || serverTimestamp()
   };
 
-  if (!existing.profile?.joinDate) {
-    patch['profile/joinDate'] = serverTimestamp();
-  }
+  await set(userRef, {
+    ...existing,
+    role: existing.role || role || 'user',
+    authUid: uid,
+    profile
+  });
 
-  await update(userRef, patch);
-  return { name, role: patch.role, uid };
+  return { name, role: existing.role || role || 'user', uid };
 }
 
 async function registerAccount(username, password) {
@@ -2293,39 +2300,32 @@ window.addEventListener("load", async () => {
 
     try {
       const storedUser = sessionStorage.getItem("kikochat_user");
-      if (storedUser) {
-        const user = JSON.parse(storedUser);
-        if (!user.uid || user.uid === firebaseUser.uid) {
-          user.uid = firebaseUser.uid;
-          const repaired = await ensureUserProfile(user.name, firebaseUser.uid, user.role || 'user');
-          sessionStorage.setItem("kikochat_user", JSON.stringify(repaired));
-          await initChatUI(repaired);
-          return;
-        }
+      if (!storedUser) {
+        // Sem uma sessão explícita do ACCEA nesta aba, nunca abrimos uma conta
+        // automaticamente. Isso impede que uma conta de teste apareça em outro
+        // aparelho/navegador.
+        await signOutAuth(auth);
+        return;
       }
 
-      const snapshot = await get(usersRef);
-      let found = null;
-      if (snapshot.exists()) {
-        Object.entries(snapshot.val()).some(([name, data]) => {
-          if (data?.authUid === firebaseUser.uid) {
-            found = { name, role: data.role || 'user', uid: firebaseUser.uid };
-            return true;
-          }
-          return false;
-        });
+      const user = JSON.parse(storedUser);
+      if (!user.name) {
+        sessionStorage.removeItem("kikochat_user");
+        await signOutAuth(auth);
+        return;
       }
 
-      if (found) {
-        const repaired = await ensureUserProfile(found.name, firebaseUser.uid, found.role || 'user');
-        sessionStorage.setItem("kikochat_user", JSON.stringify(repaired));
-        await initChatUI(repaired);
-      } else {
-        // Conta autenticada que ainda não tem perfil no banco. Não desconecta à toa:
-        // o nome está no sessionStorage quando disponível; caso contrário, não há como
-        // reconstruí-lo com segurança neste cliente.
-        console.warn('Conta autenticada sem perfil em /users.');
+      // O UID da sessão precisa ser o mesmo UID autenticado pelo Firebase.
+      if (user.uid && user.uid !== firebaseUser.uid) {
+        sessionStorage.removeItem("kikochat_user");
+        await signOutAuth(auth);
+        return;
       }
+
+      user.uid = firebaseUser.uid;
+      const repaired = await ensureUserProfile(user.name, firebaseUser.uid, user.role || 'user');
+      sessionStorage.setItem("kikochat_user", JSON.stringify(repaired));
+      await initChatUI(repaired);
     } catch (error) {
       console.error('Falha ao restaurar sessão:', error);
     }
@@ -3863,6 +3863,29 @@ body.modal-open { overflow: hidden !important; }
       if (!response.ok) {
         const code = data?.error?.message || "UNKNOWN_ERROR";
         throw new Error(code);
+      }
+
+      // Cria também o perfil em /users imediatamente, para que outras contas
+      // consigam encontrar este usuário ao adicionar amigos.
+      const profilePayload = {
+        role: "user",
+        authUid: data.localId,
+        profile: {
+          avatarColor: "",
+          avatarUrl: "",
+          status: "Disponível",
+          joinDate: { ".sv": "timestamp" }
+        }
+      };
+      const profileUrl = DB_ROOT + "/users/" + encodeURIComponent(username) + ".json?auth=" + encodeURIComponent(data.idToken);
+      const profileResponse = await fetch(profileUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(profilePayload)
+      });
+      if (!profileResponse.ok) {
+        const profileError = await profileResponse.json().catch(() => ({}));
+        console.warn("Perfil não criado no Realtime Database:", profileError);
       }
 
       // Guarda somente uma indicação local do último nome criado. A senha nunca é salva aqui.
