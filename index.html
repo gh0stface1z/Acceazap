@@ -18,7 +18,7 @@ import {
   onAuthStateChanged,
   deleteUser,
   setPersistence,
-  browserLocalPersistence
+  browserSessionPersistence
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import {
   getDatabase, ref as dbRef, push, onChildAdded, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp
@@ -40,7 +40,7 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 // A sessão do ACCEA não deve ser reutilizada automaticamente em outro navegador/dispositivo.
 // Ela permanece durante a sessão desta aba e é descartada quando a sessão termina.
-const authPersistenceReady = setPersistence(auth, browserLocalPersistence).catch(err => {
+const authPersistenceReady = setPersistence(auth, browserSessionPersistence).catch(err => {
   console.error("Não foi possível configurar a persistência do Firebase:", err);
 });
 
@@ -2326,6 +2326,7 @@ window.addEventListener("load", async () => {
 
   onAuthStateChanged(auth, async (firebaseUser) => {
     if (authBootstrapping) return;
+
     if (!firebaseUser) {
       state.currentUser = null;
       elements.mainView.style.display = 'none';
@@ -2334,18 +2335,46 @@ window.addEventListener("load", async () => {
     }
 
     try {
+      // Nunca criamos uma sessão do ACCEA só porque o Firebase encontrou
+      // uma conta autenticada. A sessão precisa ter sido criada pelo login
+      // desta própria aba. Isso impede uma conta de outra aba de reaparecer.
       let stored = null;
-      try { stored = JSON.parse(localStorage.getItem('accea_auth_user') || sessionStorage.getItem('kikochat_user') || 'null'); } catch {}
-      const emailName = String(firebaseUser.email || '').split('@')[0];
-      const name = mkKey(emailName || stored?.name || 'usuario');
-      const role = state.userMap[name]?.role || stored?.role || 'user';
+      try {
+        stored = JSON.parse(sessionStorage.getItem('kikochat_user') || 'null');
+      } catch {}
+
+      if (!stored || !stored.name || !stored.uid) {
+        await signOutAuth(auth);
+        state.currentUser = null;
+        elements.mainView.style.display = 'none';
+        elements.loginView.style.display = 'flex';
+        return;
+      }
+
+      // Se o Firebase e a sessão desta aba apontarem para contas diferentes,
+      // descartamos a sessão em vez de trocar silenciosamente de usuário.
+      if (stored.uid !== firebaseUser.uid) {
+        sessionStorage.removeItem('kikochat_user');
+        await signOutAuth(auth);
+        state.currentUser = null;
+        elements.mainView.style.display = 'none';
+        elements.loginView.style.display = 'flex';
+        return;
+      }
+
+      const name = mkKey(stored.name);
+      const role = state.userMap[name]?.role || stored.role || 'user';
       const user = { name, role, uid: firebaseUser.uid };
-      localStorage.setItem('accea_auth_user', JSON.stringify(user));
       sessionStorage.setItem('kikochat_user', JSON.stringify(user));
       await initChatUI(user);
     } catch (error) {
       console.error('Falha ao restaurar sessão:', error);
-      showLoginMessage('A conta foi autenticada, mas o ACCEA não conseguiu carregar o perfil.', 'error');
+      sessionStorage.removeItem('kikochat_user');
+      try { await signOutAuth(auth); } catch {}
+      state.currentUser = null;
+      elements.mainView.style.display = 'none';
+      elements.loginView.style.display = 'flex';
+      showLoginMessage('A sessão não pôde ser restaurada nesta aba.', 'error');
     }
   });
 });
@@ -3607,7 +3636,7 @@ body.modal-open { overflow: hidden !important; }
   const USERS = 'users';
 
   function sessionUser(){
-    try { return JSON.parse(localStorage.getItem('accea_auth_user') || sessionStorage.getItem('kikochat_user') || 'null'); }
+    try { return JSON.parse(sessionStorage.getItem('kikochat_user') || 'null'); }
     catch (_) { return null; }
   }
 
