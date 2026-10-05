@@ -1755,12 +1755,13 @@ async function searchGiphyLocal(query) {
   }
 }
 
-function sendGifMessage(gif) {
-  if (!state.currentUser || !gif?.url) return;
+async function sendGifMessage(gif) {
+  if (!state.currentUser || !auth.currentUser || !gif?.url) return;
 
   const messageData = {
     type: 'gif',
     name: state.currentUser.name,
+    uid: auth.currentUser.uid,
     data: gif.url,
     gifUrl: gif.url,
     width: Number(gif.width) || 0,
@@ -1768,15 +1769,16 @@ function sendGifMessage(gif) {
     title: gif.title || 'GIF',
     ts: Date.now(),
     deliveredBy: { [state.currentUser.name]: true },
-    seenBy: { [state.currentUser.name]: true },
-    id: generateId()
+    seenBy: { [state.currentUser.name]: true }
   };
 
-  state.messages[messageData.id] = messageData;
-  state.messageOrder.push(messageData.id);
-  renderMessage(messageData.id, messageData);
-  saveCurrentChat();
-  closeGifPicker();
+  try {
+    await push(dbRef(db, chatMessagesPath(state.currentChatId)), messageData);
+    closeGifPicker();
+  } catch (error) {
+    console.error('Falha ao enviar GIF:', error);
+    showNotification('Não foi possível enviar o GIF. Verifique as regras do Firebase.', 'error');
+  }
 }
 
 function bindGifPicker() {
