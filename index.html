@@ -921,47 +921,101 @@ function attachChatFirebaseListener(chatId) {
   state.reactions = {};
 
   const messagesRef = dbRef(db, path);
-  const messagesSource = chatId === 'g:accea-geral'
-    ? query(messagesRef, limitToLast(20))
-    : messagesRef;
   const reactionsRef = dbRef(db, reactionsPath);
 
-  const messagesUnsub = onValue(messagesSource, (snapshot) => {
-    const incoming = snapshot.exists() ? snapshot.val() : {};
-    state.messages = {};
-    state.messageOrder = [];
-    elements.messages.innerHTML = '';
-    state.lastRenderedMeta = { name: null, ts: 0 };
+  // O chat Geral usa eventos por mensagem. Assim uma mensagem nova aparece
+  // imediatamente sem reconstruir o chat inteiro a cada envio.
+  if (chatId === 'g:accea-geral') {
+    const generalQuery = query(messagesRef, limitToLast(20));
+    const seenKeys = new Set();
+    const childUnsubs = [];
 
-    Object.entries(incoming || {})
-      .map(([key, value]) => ({ key, value }))
-      .filter(({ value }) => value && typeof value === 'object')
-      .sort((a, b) => Number(a.value?.ts || 0) - Number(b.value?.ts || 0))
-      .forEach(({key, value}) => {
-        const msg = { ...(value || {}), id: value?.id || key };
-        state.messages[msg.id] = msg;
-        state.messageOrder.push(msg.id);
-        renderMessage(msg.id, msg);
+    const addGeneralMessage = (snapshot) => {
+      const key = snapshot.key;
+      const value = snapshot.val();
+      if (!key || !value || typeof value !== 'object' || seenKeys.has(key)) return;
+      seenKeys.add(key);
+
+      const msg = { ...(value || {}), id: value?.id || key };
+      state.messages[msg.id] = msg;
+      state.messageOrder.push(msg.id);
+      renderMessage(msg.id, msg);
+      setTimeout(() => scrollToBottom(false), 20);
+    };
+
+    // Carrega as últimas mensagens e continua ouvindo as novas.
+    childUnsubs.push(onChildAdded(generalQuery, addGeneralMessage));
+
+    // Atualiza/apaga visualmente mensagens alteradas sem mexer no restante do chat.
+    childUnsubs.push(onChildChanged(generalQuery, (snapshot) => {
+      const key = snapshot.key;
+      const value = snapshot.val();
+      if (!key || !value || typeof value !== 'object') return;
+
+      const msg = { ...(value || {}), id: value?.id || key };
+      state.messages[msg.id] = msg;
+
+      const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(msg.id)}"]`);
+      if (wrapper) wrapper.remove();
+      renderMessage(msg.id, msg);
+    }));
+
+    childUnsubs.push(onChildRemoved(generalQuery, (snapshot) => {
+      const key = snapshot.key;
+      const value = snapshot.val();
+      const id = value?.id || key;
+      if (id) delete state.messages[id];
+      const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+      if (wrapper) wrapper.remove();
+      state.messageOrder = state.messageOrder.filter(messageId => messageId !== id);
+    }));
+
+    chatFirebaseUnsub = () => {
+      childUnsubs.forEach(unsub => {
+        try { unsub(); } catch {}
       });
+      try { chatReactionsUnsub?.(); } catch {}
+      chatReactionsUnsub = null;
+    };
+  } else {
+    const messagesUnsub = onValue(messagesRef, (snapshot) => {
+      const incoming = snapshot.exists() ? snapshot.val() : {};
+      state.messages = {};
+      state.messageOrder = [];
+      elements.messages.innerHTML = '';
+      state.lastRenderedMeta = { name: null, ts: 0 };
 
-    // Nunca grave o histórico do Geral no localStorage.
-    // Fotos Base64 antigas podem deixar o armazenamento local enorme e quebrar a abertura do chat.
-    if (chatId !== 'g:accea-geral') {
+      Object.entries(incoming || {})
+        .map(([key, value]) => ({ key, value }))
+        .filter(({ value }) => value && typeof value === 'object')
+        .sort((a, b) => Number(a.value?.ts || 0) - Number(b.value?.ts || 0))
+        .forEach(({key, value}) => {
+          const msg = { ...(value || {}), id: value?.id || key };
+          state.messages[msg.id] = msg;
+          state.messageOrder.push(msg.id);
+          renderMessage(msg.id, msg);
+        });
+
       const chat = state.social.chats[chatId] || ensureChat(chatId);
       chat.messages = state.messageOrder.map(id => state.messages[id]).filter(Boolean);
       state.social.chats[chatId] = chat;
       saveSocialState();
-    }
+      setTimeout(() => scrollToBottom(false), 20);
+    }, (error) => {
+      console.error('Erro ao sincronizar mensagens:', error);
+      elements.messages.innerHTML = '';
+      const errorBox = document.createElement('div');
+      errorBox.className = 'chat-sync-error';
+      errorBox.textContent = 'Não foi possível carregar esta conversa agora.';
+      elements.messages.appendChild(errorBox);
+    });
 
-    setTimeout(() => scrollToBottom(false), 20);
-  }, (error) => {
-    console.error('Erro ao sincronizar mensagens:', error);
-    elements.messages.innerHTML = '';
-    const errorBox = document.createElement('div');
-    errorBox.className = 'chat-sync-error';
-    errorBox.textContent = 'Não foi possível carregar esta conversa agora.';
-    elements.messages.appendChild(errorBox);
-  });
+    chatFirebaseUnsub = () => {
+      try { messagesUnsub(); } catch {}
+      try { chatReactionsUnsub?.(); } catch {}
+      chatReactionsUnsub = null;
+    };
+  }
 
   chatReactionsUnsub = onValue(reactionsRef, (snapshot) => {
     state.reactions = snapshot.exists() ? snapshot.val() : {};
@@ -975,12 +1029,6 @@ function attachChatFirebaseListener(chatId) {
     state.reactions = {};
     console.warn('Não foi possível sincronizar reações:', error);
   });
-
-  chatFirebaseUnsub = () => {
-    try { messagesUnsub(); } catch {}
-    try { chatReactionsUnsub?.(); } catch {}
-    chatReactionsUnsub = null;
-  };
 }
 function openChat(chatId) {
   const me = state.currentUser?.name;
