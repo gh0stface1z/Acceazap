@@ -21,7 +21,7 @@ import {
   browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import {
-  getDatabase, ref as dbRef, push, onChildAdded, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp, query, limitToLast
+  getDatabase, ref as dbRef, push, onChildAdded, onChildChanged, onChildRemoved, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp, query, limitToLast
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
 
 // Firebase Configuration
@@ -936,7 +936,7 @@ function attachChatFirebaseListener(chatId) {
       if (!key || !value || typeof value !== 'object' || seenKeys.has(key)) return;
       seenKeys.add(key);
 
-      const msg = { ...(value || {}), id: value?.id || key };
+      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
       state.messages[msg.id] = msg;
       state.messageOrder.push(msg.id);
       renderMessage(msg.id, msg);
@@ -952,7 +952,7 @@ function attachChatFirebaseListener(chatId) {
       const value = snapshot.val();
       if (!key || !value || typeof value !== 'object') return;
 
-      const msg = { ...(value || {}), id: value?.id || key };
+      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
       state.messages[msg.id] = msg;
 
       const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(msg.id)}"]`);
@@ -1667,17 +1667,40 @@ async function deleteForEveryoneLocal(key) {
     showNotification('Você só pode apagar suas próprias mensagens.', 'warning');
     return;
   }
+
+  // No Firebase, o caminho precisa usar a chave real do item, não necessariamente
+  // o campo message.id. Isso é especialmente importante para mensagens de mídia.
+  const firebaseKey = message._firebaseKey || key;
+
   try {
-    await update(dbRef(db, `${chatMessagesPath(state.currentChatId)}/${key}`), {
+    await update(dbRef(db, `${chatMessagesPath(state.currentChatId)}/${firebaseKey}`), {
       type: 'deleted', text: '', data: null, filename: null,
       deleted: true, deletedAt: serverTimestamp()
     });
 
     try {
-      await remove(dbRef(db, `${chatReactionsPath(state.currentChatId)}/${key}`));
+      await remove(dbRef(db, `${chatReactionsPath(state.currentChatId)}/${firebaseKey}`));
     } catch (reactionError) {
       console.warn('Não foi possível limpar as reações da mensagem apagada:', reactionError);
     }
+
+    // Atualiza a mensagem na tela imediatamente. O Firebase permanece como fonte de verdade.
+    const deletedMessage = {
+      ...message,
+      type: 'deleted',
+      text: '',
+      data: null,
+      filename: null,
+      deleted: true,
+      deletedAt: Date.now(),
+      _firebaseKey: firebaseKey
+    };
+    state.messages[key] = deletedMessage;
+
+    const wrapper = document.querySelector(`[data-message-id="${key}"]`);
+    if (wrapper) wrapper.remove();
+    renderMessage(key, deletedMessage);
+    delete state.reactions[key];
 
     showNotification('Mensagem apagada para todos.', 'success');
   } catch (error) {
