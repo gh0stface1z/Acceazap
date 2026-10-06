@@ -921,8 +921,6 @@ function attachChatFirebaseListener(chatId) {
   state.reactions = {};
 
   const messagesRef = dbRef(db, path);
-  // O Geral não precisa carregar o histórico inteiro toda vez que alguém entra.
-  // Isso evita que uma mídia antiga enorme trave a tela e empurre o composer para baixo.
   const messagesQuery = query(messagesRef, limitToLast(40));
   const reactionsRef = dbRef(db, reactionsPath);
 
@@ -944,16 +942,11 @@ function attachChatFirebaseListener(chatId) {
       });
 
     const chat = state.social.chats[chatId] || ensureChat(chatId);
-    // Não guarde Base64 de mídia no localStorage. O Firebase é a fonte de verdade.
+    // Não grave Base64 de imagens no localStorage. O Firebase continua sendo a fonte de verdade.
     chat.messages = state.messageOrder
       .map(id => state.messages[id])
       .filter(Boolean)
-      .map(msg => {
-        if (msg.type === 'image') {
-          return { ...msg, data: '', mediaUrl: '' };
-        }
-        return msg;
-      });
+      .map(msg => msg.type === 'image' ? { ...msg, data: '' } : msg);
     state.social.chats[chatId] = chat;
     saveSocialState();
     setTimeout(() => scrollToBottom(false), 20);
@@ -962,7 +955,7 @@ function attachChatFirebaseListener(chatId) {
     elements.messages.innerHTML = '';
     const errorBox = document.createElement('div');
     errorBox.className = 'chat-sync-error';
-    errorBox.innerHTML = '<i class="fas fa-circle-exclamation"></i><span>Não foi possível carregar o chat agora.</span>';
+    errorBox.innerHTML = '<i class="fas fa-circle-exclamation"></i><span>Não foi possível carregar esta conversa agora.</span>';
     elements.messages.appendChild(errorBox);
     showNotification('Não foi possível sincronizar esta conversa com o Firebase.', 'error');
   });
@@ -1004,7 +997,6 @@ function openChat(chatId) {
   state.messageOrder = [];
   state.reactions = {};
   state.lastRenderedMeta = { name: null, ts: 0 };
-  // Firebase is the source of truth. Do not paint stale cached media first.
   elements.messages.innerHTML = '';
 
   const isGroup = chat.type === 'group';
@@ -1213,9 +1205,11 @@ function compressImageForFirebase(file) {
       const img = new Image();
       img.onload = () => {
         const maxSide = 1100;
-        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
-        const width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
-        const height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+        const originalWidth = img.naturalWidth || img.width;
+        const originalHeight = img.naturalHeight || img.height;
+        const scale = Math.min(1, maxSide / Math.max(originalWidth, originalHeight));
+        const width = Math.max(1, Math.round(originalWidth * scale));
+        const height = Math.max(1, Math.round(originalHeight * scale));
 
         const canvas = document.createElement('canvas');
         canvas.width = width;
@@ -1230,7 +1224,6 @@ function compressImageForFirebase(file) {
         let quality = 0.72;
         let result = canvas.toDataURL('image/jpeg', quality);
 
-        // Keep each Base64 image comfortably below the size that makes RTDB/chat rendering painful.
         while (result.length > 900000 && quality > 0.42) {
           quality -= 0.08;
           result = canvas.toDataURL('image/jpeg', quality);
@@ -1802,7 +1795,7 @@ async function searchGiphyLocal(query) {
   }
 }
 
-async async function sendGifMessage(gif) {
+async function sendGifMessage(gif) {
   if (!state.currentUser || !auth.currentUser || !gif?.url) return;
 
   const messageData = {
@@ -3769,9 +3762,9 @@ body.modal-open { overflow: hidden !important; }
       </div>
 
       <div class="composer" id="composer">
-        <button id="attachBtn" class="composer-btn" title="Anexar foto"><i class="fas fa-paperclip"></i></button>
+        <button id="attachBtn" class="composer-btn" title="Anexar foto ou vídeo"><i class="fas fa-paperclip"></i></button>
         <button id="gifBtn" type="button" class="composer-btn gif-btn" title="GIF">GIF</button>
-        <input type="file" id="fileInput" accept="image/*" hidden />
+        <input type="file" id="fileInput" accept="image/*,video/*" hidden />
         <textarea id="textInput" placeholder="Digite uma mensagem…" rows="1"></textarea>
         <button id="sendBtn" class="composer-btn" title="Send"><i class="fas fa-paper-plane"></i></button>
       </div>
