@@ -3926,6 +3926,128 @@ body.modal-open { overflow: hidden !important; }
 })();
 </script>
 
+
+<style id="accea-layout-lock-fix">
+/* BLOQUEIO DO LAYOUT DO CHAT: mensagens nunca podem empurrar o compositor para fora da tela. */
+html, body {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+#mainView {
+  width: 100% !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  min-height: 0 !important;
+  max-height: 100dvh !important;
+  overflow: hidden !important;
+  min-width: 0 !important;
+}
+
+#mainView > .left-panel,
+#mainView > .right-panel {
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+.right-panel {
+  height: 100% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+.messages-container {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+#messages {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  max-height: 100% !important;
+  width: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  align-self: stretch !important;
+}
+
+.message-wrapper,
+.message-col,
+.message-bubble {
+  min-width: 0 !important;
+}
+
+.message-wrapper { max-width: 74% !important; }
+.message-col, .message-bubble { max-width: 100% !important; }
+.message-bubble { overflow-wrap: anywhere !important; word-break: break-word !important; }
+
+.chat-media,
+.chat-gif {
+  display: block !important;
+  max-width: min(280px, 100%) !important;
+  max-height: 220px !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain !important;
+}
+
+.composer-container {
+  flex: 0 0 auto !important;
+  min-height: 0 !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
+.composer {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  flex: 0 0 auto !important;
+  box-sizing: border-box !important;
+}
+
+#textInput {
+  flex: 1 1 auto !important;
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: 22px !important;
+  max-height: 140px !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  box-sizing: border-box !important;
+}
+
+/* O seletor de GIF fica fora do fluxo do chat e nunca aumenta sua altura. */
+#gifPicker {
+  position: fixed !important;
+  z-index: 100000 !important;
+  max-width: calc(100vw - 28px) !important;
+  max-height: calc(100dvh - 110px) !important;
+  overflow: hidden !important;
+  box-sizing: border-box !important;
+}
+
+#gifResults,
+.gif-results {
+  min-height: 0 !important;
+  max-height: 100% !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+}
+</style>
 </body>
 </html>
 
