@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>ACCEA v1.8.1</title>
+<title>ACCEA v1.8.3</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -114,7 +114,8 @@ let state = {
   currentChatId: 'g:accea-geral',
   social: { friends: [], incoming: [], outgoing: [], groups: [], chats: {} },
   notifiedMessageIds: new Set(),
-  conversationPreviewUnsubs: []
+  conversationPreviewUnsubs: [],
+  chatInitialLoading: false
 };
 
 // DOM elements cache
@@ -182,6 +183,8 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 function formatText(text) {
   const escaped = escapeHtml(text);
   let formatted = escaped
@@ -191,15 +194,17 @@ function formatText(text) {
 
   // Links clicáveis, sem permitir HTML/JS vindo da mensagem.
   formatted = formatted.replace(/(^|[\s>])(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (full, prefix, rawUrl) => {
-    const trailing = rawUrl.match(/[.,!?;:)]}+$/)?.[0] || '';
+    const trailing = rawUrl.match(/[.,!?;:)}]+$/)?.[0] || '';
     const urlText = trailing ? rawUrl.slice(0, -trailing.length) : rawUrl;
     const href = /^https?:\/\//i.test(urlText) ? urlText : `https://${urlText}`;
     return `${prefix}<a class="message-link" href="${href}" target="_blank" rel="noopener noreferrer">${urlText}</a>${trailing}`;
   });
 
-  formatted = formatted.replace(/@([a-zA-Z0-9._-]+)/g, (full, name) => {
-    const isMe = mkKey(name) === mkKey(state.currentUser?.name);
-    return `<span class="mention${isMe ? ' mention-me' : ''}">@${name}</span>`;
+  // Destaca menções mesmo quando o nome tem acentos, emojis ou símbolos.
+  formatted = formatted.replace(/@([^\s@<]+)/gu, (full, name) => {
+    const cleanName = String(name).replace(/[.,!?;:)}]+$/u, '');
+    const isMe = mkKey(cleanName) === mkKey(state.currentUser?.name);
+    return `<span class="mention${isMe ? ' mention-me' : ''}">@${escapeHtml(cleanName)}</span>${escapeHtml(String(name).slice(cleanName.length))}`;
   });
 
   return formatted.replace(/\n/g, '<br>');
@@ -1084,8 +1089,22 @@ function attachChatFirebaseListener(chatId) {
     state.messageOrder = state.messageOrder.filter(x => x !== id);
   }));
 
-  // Só libera notificações depois que o lote inicial terminou de chegar.
-  get(messagesQuery).finally(() => { initialLoading = false; });
+  // Depois do lote inicial, redesenha em ordem cronológica uma única vez.
+  // Isso elimina divisores "Today" duplicados e garante que a conversa termine no fim.
+  state.chatInitialLoading = true;
+  get(messagesQuery).then(() => {
+    initialLoading = false;
+    const ordered = [...state.messageOrder].sort((a, b) => Number(state.messages[a]?.ts || 0) - Number(state.messages[b]?.ts || 0));
+    state.messageOrder = ordered;
+    elements.messages.innerHTML = '';
+    state.lastRenderedMeta = { name: null, ts: 0 };
+    ordered.forEach(id => renderMessage(id, state.messages[id]));
+    state.chatInitialLoading = false;
+    requestAnimationFrame(() => scrollToBottom(false));
+  }).catch(() => {
+    initialLoading = false;
+    state.chatInitialLoading = false;
+  });
 
   chatFirebaseUnsub = () => {
     childUnsubs.forEach(unsub => { try { unsub(); } catch {} });
@@ -1118,14 +1137,33 @@ function attachConversationPreviewListeners() {
   chatIds.forEach(chatId => {
     const ref = dbRef(db, chatMessagesPath(chatId));
     const q = query(ref, limitToLast(1));
+    let lastKey = null;
+    let initialized = false;
+
     const unsub = onValue(q, snap => {
       if (!snap.exists()) return;
-      const raw = Object.values(snap.val() || {})[0];
+      const entries = Object.entries(snap.val() || {});
+      if (!entries.length) return;
+      const [key, raw] = entries[entries.length - 1];
       if (!raw || typeof raw !== 'object') return;
-      const msg = raw;
+
+      const isNewMessage = initialized && key !== lastKey;
+      lastKey = key;
+      initialized = true;
+
+      const msg = { ...raw, id: raw.id || key, _firebaseKey: key };
       const chat = ensureChat(chatId);
       chat.lastMessageTs = Number(msg.ts || chat.lastMessageTs || 0);
       chat.lastMessageText = msg.deleted || msg.type === 'deleted' ? 'Mensagem apagada' : (msg.type === 'gif' ? 'GIF' : msg.type === 'image' ? '📷 Foto' : msg.text || '');
+
+      const isIncoming = mkKey(msg.name) !== mkKey(state.currentUser?.name);
+      const isMention = Array.isArray(msg.mentions) && msg.mentions.includes(mkKey(state.currentUser?.name));
+      if (isNewMessage && isIncoming && state.currentChatId !== chatId) {
+        chat.unreadCount = Number(chat.unreadCount || 0) + 1;
+        if (isMention) chat.mentionUnread = Number(chat.mentionUnread || 0) + 1;
+        notifyIncomingMessage(chatId, msg, key);
+      }
+
       state.social.chats[chatId] = chat;
       saveSocialState();
       renderConversationList();
@@ -1168,6 +1206,7 @@ function openChat(chatId) {
       ? `${Math.max(chat.participants?.length || 0, 2)} participantes`
       : (chat.subtitle || 'Conversa privada');
   renderConversationList();
+  state.chatInitialLoading = true;
   attachChatFirebaseListener(chatId);
   if (window.innerWidth <= 768) document.body.classList.add('show-chat-panel');
   setTimeout(() => scrollToBottom(false), 30);
@@ -1288,9 +1327,13 @@ async function sendTextMessage(text) {
   if (!state.currentUser || !auth.currentUser) return;
   const cleanText = String(text || '').trim();
   if (!cleanText && !state.pendingGif) return;
-  const mentionedUsers = [...cleanText.matchAll(/@([a-zA-Z0-9._-]+)/g)]
-    .map(m => mkKey(m[1]))
-    .filter(name => !!state.userMap[name]);
+  const mentionedUsers = Object.keys(state.userMap || {})
+    .filter(originalName => {
+      const escaped = escapeRegExp(originalName);
+      const re = new RegExp(`@${escaped}(?=$|[\\s.,!?;:)]})`, 'iu');
+      return re.test(cleanText);
+    })
+    .map(mkKey);
   const pendingGif = state.pendingGif;
   const messageData = {
     type: pendingGif && !cleanText ? "gif" : "text",
@@ -1703,7 +1746,7 @@ function renderMessage(key, msg) {
   if (!isMe) {
     markDelivered(key);
     markSeen(key);
-    if (state.currentUser) playNotificationSound();
+    if (state.currentUser && !state.chatInitialLoading) playNotificationSound();
   }
 
   requestAnimationFrame(() => wrapper.classList.add('message-entered'));
@@ -2185,7 +2228,7 @@ function showMessageToast(chatId, msg, mentioned = false) {
   const toast = document.createElement('button');
   toast.type = 'button';
   toast.className = 'message-toast';
-  toast.innerHTML = `<div class="message-toast-avatar">${escapeHtml(initials(msg.name || '?'))}</div><div class="message-toast-body"><strong>${escapeHtml(mentioned ? '@ ' + (msg.name || title) : (msg.name || title))}</strong><span>${escapeHtml(preview.slice(0, 90))}</span></div><i class="fas fa-chevron-right"></i>`;
+  toast.innerHTML = `<div class="message-toast-avatar">${escapeHtml(initials(msg.name || '?'))}</div><div class="message-toast-body"><strong>${escapeHtml(mentioned ? '@' + state.currentUser.name : (msg.name || title))}</strong><span>${escapeHtml(mentioned ? `${msg.name || title}: ${preview}` : preview).slice(0, 90)}</span></div><i class="fas fa-chevron-right"></i>`;
   toast.addEventListener('click', () => {
     openChat(chatId);
     setTimeout(() => scrollToBottom(true), 50);
@@ -3414,6 +3457,7 @@ mark {
   display: flex; flex-direction: column; gap: 3px; scroll-behavior: smooth;
 }
 
+.app-version { font-size: 10px; font-weight: 700; opacity: .55; margin-left: 5px; vertical-align: middle; }
 .date-divider {
   display: flex; align-items: center; justify-content: center;
   margin: 18px 0 10px; position: relative;
@@ -3994,7 +4038,7 @@ body.modal-open { overflow: hidden !important; }
     <div class="panel-header">
       <div class="header-left">
         <div class="header-logo">🐰</div>
-        <div class="header-title">ACCEA</div>
+        <div class="header-title">ACCEA <span class="app-version">v1.8.3</span></div>
       </div>
       <div class="header-actions">
         <button id="themeToggle" class="icon-button" title="Toggle theme"><i class="fas fa-moon"></i></button>
