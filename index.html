@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>ACCEA</title>
+<title>ACCEA v1.7</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -88,7 +88,9 @@ let state = {
   isAtBottom: true,
   unseenWhileScrolled: 0,
   currentChatId: 'g:accea-geral',
-  social: { friends: [], incoming: [], outgoing: [], groups: [], chats: {} }
+  social: { friends: [], incoming: [], outgoing: [], groups: [], chats: {} },
+  notifiedMessageIds: new Set(),
+  conversationPreviewUnsubs: []
 };
 
 // DOM elements cache
@@ -158,12 +160,25 @@ function escapeHtml(str) {
 
 function formatText(text) {
   const escaped = escapeHtml(text);
-  return escaped
+  let formatted = escaped
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    .replace(/`(.*?)`/g, '<code>$1</code>')
-    .replace(/@(\w+)/g, '<span class="mention">@$1</span>')
-    .replace(/\n/g, '<br>');
+    .replace(/`(.*?)`/g, '<code>$1</code>');
+
+  // Links clicáveis, sem permitir HTML/JS vindo da mensagem.
+  formatted = formatted.replace(/(^|[\s>])(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (full, prefix, rawUrl) => {
+    const trailing = rawUrl.match(/[.,!?;:)]}+$/)?.[0] || '';
+    const urlText = trailing ? rawUrl.slice(0, -trailing.length) : rawUrl;
+    const href = /^https?:\/\//i.test(urlText) ? urlText : `https://${urlText}`;
+    return `${prefix}<a class="message-link" href="${href}" target="_blank" rel="noopener noreferrer">${urlText}</a>${trailing}`;
+  });
+
+  formatted = formatted.replace(/@([a-zA-Z0-9._-]+)/g, (full, name) => {
+    const isMe = mkKey(name) === mkKey(state.currentUser?.name);
+    return `<span class="mention${isMe ? ' mention-me' : ''}">@${name}</span>`;
+  });
+
+  return formatted.replace(/\n/g, '<br>');
 }
 
 function highlightMatch(text, query) {
@@ -173,11 +188,32 @@ function highlightMatch(text, query) {
   return escaped.replace(new RegExp(`(${escapedQuery})`, 'ig'), '<mark>$1</mark>');
 }
 
+let notificationAudioContext = null;
+function unlockNotificationAudio() {
+  try {
+    if (!notificationAudioContext) notificationAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (notificationAudioContext.state === 'suspended') notificationAudioContext.resume();
+  } catch {}
+}
+
 function playNotificationSound() {
   if (!state.soundEnabled) return;
-  const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBTOJ0fPAciMFJHfH8N2QQAoUXrTp66hVFApGn+Dyu2whBTKJ0fPAciMFJHfH8N2QQAoUXrTp66hVFApGn+Dyu2whBTKJ0fPAciMF');
-  audio.volume = 0;
-  audio.play().catch(() => {});
+  try {
+    unlockNotificationAudio();
+    if (!notificationAudioContext) return;
+    const ctx = notificationAudioContext;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.08, ctx.currentTime + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.2);
+  } catch {}
 }
 
 // Theme management
@@ -487,12 +523,20 @@ function ensureChat(chatId, meta = {}) {
       type: meta.type || 'private',
       name: meta.name || chatId,
       participants: Array.isArray(meta.participants) ? meta.participants : [],
-      messages: []
+      messages: [],
+      lastMessageTs: Number(meta.lastMessageTs || 0),
+      lastMessageText: meta.lastMessageText || '',
+      unreadCount: Number(meta.unreadCount || 0),
+      mentionUnread: Number(meta.mentionUnread || 0)
     };
   } else {
     state.social.chats[chatId] = {
       ...state.social.chats[chatId],
       ...meta,
+      lastMessageTs: Number(meta.lastMessageTs !== undefined ? meta.lastMessageTs : (state.social.chats[chatId].lastMessageTs || 0)),
+      lastMessageText: meta.lastMessageText !== undefined ? meta.lastMessageText : (state.social.chats[chatId].lastMessageText || ''),
+      unreadCount: Number(meta.unreadCount !== undefined ? meta.unreadCount : (state.social.chats[chatId].unreadCount || 0)),
+      mentionUnread: Number(meta.mentionUnread !== undefined ? meta.mentionUnread : (state.social.chats[chatId].mentionUnread || 0)),
       messages: Array.isArray(state.social.chats[chatId].messages) ? state.social.chats[chatId].messages : []
     };
   }
@@ -546,6 +590,7 @@ function applyFriendshipsSnapshot(snapshot) {
   renderFriendsUI();
   renderConversationList();
   updateOnlineCount();
+  attachConversationPreviewListeners();
 }
 
 function applyIncomingRequestsSnapshot(snapshot) {
@@ -810,23 +855,32 @@ function renderConversationList() {
   if (!list || !state.currentUser) return;
   list.innerHTML = '';
 
-  const entries = [
-    { id: 'g:accea-geral', type: 'group', name: 'ACCEA', subtitle: 'Grupo geral', icon: '🐰' },
-    ...state.social.friends.map(name => ({
-      id: getPrivateChatId(state.currentUser.name, name),
-      type: 'private',
-      name,
-      subtitle: state.userMap[name]?.status?.online ? 'online' : 'offline',
-      avatarUrl: state.userMap[name]?.profile?.avatarUrl || getProfilePhoto(name)
-    })),
-    ...state.social.groups.map(group => ({
-      id: group.id,
-      type: 'group',
-      name: group.name,
-      subtitle: `${group.participants.length} participantes`,
-      icon: '👥'
-    }))
-  ];
+  const general = {
+    id: 'g:accea-geral', type: 'group', name: 'ACCEA', subtitle: 'Grupo geral', icon: '🐰', pinned: true
+  };
+  const privateEntries = state.social.friends.map(name => {
+    const id = getPrivateChatId(state.currentUser.name, name);
+    const chat = ensureChat(id, { type: 'private', name });
+    return {
+      id, type: 'private', name,
+      subtitle: chat.lastMessageText || (state.userMap[name]?.status?.online ? 'online' : 'offline'),
+      avatarUrl: state.userMap[name]?.profile?.avatarUrl || getProfilePhoto(name),
+      lastMessageTs: Number(chat.lastMessageTs || 0),
+      unreadCount: Number(chat.unreadCount || 0),
+      mentionUnread: Number(chat.mentionUnread || 0)
+    };
+  });
+  const groups = state.social.groups.map(group => {
+    const chat = ensureChat(group.id, { type: 'group', name: group.name, participants: group.participants });
+    return {
+      id: group.id, type: 'group', name: group.name,
+      subtitle: chat.lastMessageText || `${group.participants.length} participantes`,
+      icon: '👥', lastMessageTs: Number(chat.lastMessageTs || 0),
+      unreadCount: Number(chat.unreadCount || 0), mentionUnread: Number(chat.mentionUnread || 0)
+    };
+  });
+
+  const entries = [general, ...privateEntries.sort((a,b) => b.lastMessageTs - a.lastMessageTs), ...groups.sort((a,b) => b.lastMessageTs - a.lastMessageTs)];
 
   entries.forEach(chat => {
     const row = document.createElement('div');
@@ -835,21 +889,30 @@ function renderConversationList() {
     const avatar = document.createElement('div');
     avatar.className = 'conversation-avatar';
     if (chat.avatarUrl) {
-      const img = document.createElement('img');
-      img.src = chat.avatarUrl; img.alt = chat.name; avatar.appendChild(img);
+      const img = document.createElement('img'); img.src = chat.avatarUrl; img.alt = chat.name; avatar.appendChild(img);
     } else {
       avatar.textContent = chat.icon || initials(chat.name);
       avatar.style.background = chat.type === 'group' ? 'var(--accent-glow)' : colorFromName(chat.name);
     }
     const info = document.createElement('div');
     info.className = 'conversation-info';
-    info.innerHTML = `<div class="conversation-name">${escapeHtml(chat.name)}</div><div class="conversation-sub">${escapeHtml(chat.subtitle)}</div>`;
+    const nameRow = document.createElement('div');
+    nameRow.className = 'conversation-name-row';
+    const nameEl = document.createElement('div'); nameEl.className = 'conversation-name'; nameEl.textContent = chat.name;
+    nameRow.appendChild(nameEl);
+    if (chat.unreadCount > 0) {
+      const badge = document.createElement('span'); badge.className = 'conversation-unread'; badge.textContent = chat.unreadCount > 99 ? '99+' : String(chat.unreadCount); nameRow.appendChild(badge);
+    }
+    if (chat.mentionUnread > 0) {
+      const mention = document.createElement('span'); mention.className = 'conversation-mention-badge'; mention.textContent = '@'; mention.title = 'Você foi mencionado'; nameRow.appendChild(mention);
+    }
+    const sub = document.createElement('div'); sub.className = 'conversation-sub'; sub.textContent = chat.subtitle;
+    info.append(nameRow, sub);
     row.append(avatar, info);
     row.addEventListener('click', () => openChat(chat.id));
     list.appendChild(row);
   });
 }
-
 function renderFriendsUI() {
   const list = document.getElementById('friendsList');
   const count = document.getElementById('friendCount');
@@ -912,122 +975,138 @@ function detachChatFirebaseListener() {
   chatFirebasePath = '';
 }
 
+function meaningfulMessageChanged(oldMsg, newMsg) {
+  return ['type','text','data','gifUrl','filename','deleted','replyTo','name','ts'].some(k => JSON.stringify(oldMsg?.[k] ?? null) !== JSON.stringify(newMsg?.[k] ?? null));
+}
+
+function updateChatMetadata(chatId, msg, isIncoming = false) {
+  const chat = state.social.chats[chatId] || ensureChat(chatId);
+  const ts = Number(msg.ts || Date.now());
+  if (ts >= Number(chat.lastMessageTs || 0)) {
+    chat.lastMessageTs = ts;
+    chat.lastMessageText = msg.deleted || msg.type === 'deleted' ? 'Mensagem apagada' : (msg.type === 'gif' ? 'GIF' : msg.type === 'image' ? '📷 Foto' : msg.text || '');
+  }
+  if (isIncoming && mkKey(msg.name) !== mkKey(state.currentUser?.name) && state.currentChatId !== chatId) {
+    chat.unreadCount = Number(chat.unreadCount || 0) + 1;
+    if (Array.isArray(msg.mentions) && msg.mentions.includes(mkKey(state.currentUser?.name))) chat.mentionUnread = Number(chat.mentionUnread || 0) + 1;
+  }
+  if (state.currentChatId === chatId) {
+    chat.unreadCount = 0;
+    chat.mentionUnread = 0;
+  }
+  state.social.chats[chatId] = chat;
+  saveSocialState();
+  renderConversationList();
+}
+
+function notifyIncomingMessage(chatId, msg, firebaseKey) {
+  if (!msg || mkKey(msg.name) === mkKey(state.currentUser?.name)) return;
+  const id = `${chatId}:${firebaseKey || msg.id}`;
+  if (state.notifiedMessageIds.has(id)) return;
+  state.notifiedMessageIds.add(id);
+
+  const mentioned = Array.isArray(msg.mentions) && msg.mentions.includes(mkKey(state.currentUser?.name));
+  playNotificationSound();
+  showMessageToast(chatId, msg, mentioned);
+}
+
 function attachChatFirebaseListener(chatId) {
   detachChatFirebaseListener();
-
   const path = chatMessagesPath(chatId);
   const reactionsPath = chatReactionsPath(chatId);
   chatFirebasePath = path;
   state.reactions = {};
 
   const messagesRef = dbRef(db, path);
+  const messagesQuery = query(messagesRef, limitToLast(chatId === 'g:accea-geral' ? 50 : 80));
   const reactionsRef = dbRef(db, reactionsPath);
+  const childUnsubs = [];
+  const seenKeys = new Set();
+  let initialLoading = true;
 
-  // O chat Geral usa eventos por mensagem. Assim uma mensagem nova aparece
-  // imediatamente sem reconstruir o chat inteiro a cada envio.
-  if (chatId === 'g:accea-geral') {
-    const generalQuery = query(messagesRef, limitToLast(20));
-    const seenKeys = new Set();
-    const childUnsubs = [];
+  const addMessage = (snapshot) => {
+    const key = snapshot.key, value = snapshot.val();
+    if (!key || !value || typeof value !== 'object' || seenKeys.has(key)) return;
+    seenKeys.add(key);
+    const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
+    state.messages[msg.id] = msg;
+    if (!state.messageOrder.includes(msg.id)) state.messageOrder.push(msg.id);
+    state.messageOrder.sort((a,b) => Number(state.messages[a]?.ts || 0) - Number(state.messages[b]?.ts || 0));
+    renderMessage(msg.id, msg);
+    updateChatMetadata(chatId, msg, !initialLoading);
+    if (!initialLoading) notifyIncomingMessage(chatId, msg, key);
+    if (state.currentChatId === chatId && (isNearBottom() || mkKey(msg.name) === mkKey(state.currentUser?.name))) setTimeout(() => scrollToBottom(false), 20);
+  };
 
-    const addGeneralMessage = (snapshot) => {
-      const key = snapshot.key;
-      const value = snapshot.val();
-      if (!key || !value || typeof value !== 'object' || seenKeys.has(key)) return;
-      seenKeys.add(key);
+  childUnsubs.push(onChildAdded(messagesQuery, addMessage));
+  childUnsubs.push(onChildChanged(messagesQuery, (snapshot) => {
+    const key = snapshot.key, value = snapshot.val();
+    if (!key || !value || typeof value !== 'object') return;
+    const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
+    const old = state.messages[msg.id];
+    state.messages[msg.id] = msg;
+    if (!old || !meaningfulMessageChanged(old, msg)) return;
+    const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(msg.id)}"]`);
+    if (wrapper) wrapper.remove();
+    renderMessage(msg.id, msg);
+    updateChatMetadata(chatId, msg, false);
+  }));
+  childUnsubs.push(onChildRemoved(messagesQuery, (snapshot) => {
+    const key = snapshot.key, value = snapshot.val();
+    const id = value?.id || key;
+    if (id) delete state.messages[id];
+    const wrapper = id ? elements.messages.querySelector(`[data-message-id="${CSS.escape(id)}"]`) : null;
+    if (wrapper) wrapper.remove();
+    state.messageOrder = state.messageOrder.filter(x => x !== id);
+  }));
 
-      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
-      state.messages[msg.id] = msg;
-      state.messageOrder.push(msg.id);
-      renderMessage(msg.id, msg);
-      setTimeout(() => scrollToBottom(false), 20);
-    };
+  // Só libera notificações depois que o lote inicial terminou de chegar.
+  get(messagesQuery).finally(() => { initialLoading = false; });
 
-    // Carrega as últimas mensagens e continua ouvindo as novas.
-    childUnsubs.push(onChildAdded(generalQuery, addGeneralMessage));
-
-    // Atualiza/apaga visualmente mensagens alteradas sem mexer no restante do chat.
-    childUnsubs.push(onChildChanged(generalQuery, (snapshot) => {
-      const key = snapshot.key;
-      const value = snapshot.val();
-      if (!key || !value || typeof value !== 'object') return;
-
-      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
-      state.messages[msg.id] = msg;
-
-      const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(msg.id)}"]`);
-      if (wrapper) wrapper.remove();
-      renderMessage(msg.id, msg);
-    }));
-
-    childUnsubs.push(onChildRemoved(generalQuery, (snapshot) => {
-      const key = snapshot.key;
-      const value = snapshot.val();
-      const id = value?.id || key;
-      if (id) delete state.messages[id];
-      const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
-      if (wrapper) wrapper.remove();
-      state.messageOrder = state.messageOrder.filter(messageId => messageId !== id);
-    }));
-
-    chatFirebaseUnsub = () => {
-      childUnsubs.forEach(unsub => {
-        try { unsub(); } catch {}
-      });
-      try { chatReactionsUnsub?.(); } catch {}
-      chatReactionsUnsub = null;
-    };
-  } else {
-    const messagesUnsub = onValue(messagesRef, (snapshot) => {
-      const incoming = snapshot.exists() ? snapshot.val() : {};
-      state.messages = {};
-      state.messageOrder = [];
-      elements.messages.innerHTML = '';
-      state.lastRenderedMeta = { name: null, ts: 0 };
-
-      Object.entries(incoming || {})
-        .map(([key, value]) => ({ key, value }))
-        .filter(({ value }) => value && typeof value === 'object')
-        .sort((a, b) => Number(a.value?.ts || 0) - Number(b.value?.ts || 0))
-        .forEach(({key, value}) => {
-          const msg = { ...(value || {}), id: value?.id || key };
-          state.messages[msg.id] = msg;
-          state.messageOrder.push(msg.id);
-          renderMessage(msg.id, msg);
-        });
-
-      const chat = state.social.chats[chatId] || ensureChat(chatId);
-      chat.messages = state.messageOrder.map(id => state.messages[id]).filter(Boolean);
-      state.social.chats[chatId] = chat;
-      saveSocialState();
-      setTimeout(() => scrollToBottom(false), 20);
-    }, (error) => {
-      console.error('Erro ao sincronizar mensagens:', error);
-      elements.messages.innerHTML = '';
-      const errorBox = document.createElement('div');
-      errorBox.className = 'chat-sync-error';
-      errorBox.textContent = 'Não foi possível carregar esta conversa agora.';
-      elements.messages.appendChild(errorBox);
-    });
-
-    chatFirebaseUnsub = () => {
-      try { messagesUnsub(); } catch {}
-      try { chatReactionsUnsub?.(); } catch {}
-      chatReactionsUnsub = null;
-    };
-  }
+  chatFirebaseUnsub = () => {
+    childUnsubs.forEach(unsub => { try { unsub(); } catch {} });
+    try { chatReactionsUnsub?.(); } catch {}
+    chatReactionsUnsub = null;
+  };
 
   chatReactionsUnsub = onValue(reactionsRef, (snapshot) => {
     state.reactions = snapshot.exists() ? snapshot.val() : {};
-
     document.querySelectorAll('[data-message-id]').forEach(wrapper => {
-      const messageKey = wrapper.dataset.messageId;
+      const key = wrapper.dataset.messageId;
       const col = wrapper.querySelector('.message-col');
-      if (col) renderReactionsInto(messageKey, col);
+      if (col) renderReactionsInto(key, col);
     });
-  }, (error) => {
-    state.reactions = {};
-    console.warn('Não foi possível sincronizar reações:', error);
+  }, () => { state.reactions = {}; });
+}
+
+function clearConversationPreviewListeners() {
+  (state.conversationPreviewUnsubs || []).forEach(unsub => { try { unsub(); } catch {} });
+  state.conversationPreviewUnsubs = [];
+}
+
+function attachConversationPreviewListeners() {
+  if (!state.currentUser) return;
+  clearConversationPreviewListeners();
+  const chatIds = new Set(['g:accea-geral']);
+  (state.social.friends || []).forEach(name => chatIds.add(getPrivateChatId(state.currentUser.name, name)));
+  (state.social.groups || []).forEach(group => chatIds.add(group.id));
+
+  chatIds.forEach(chatId => {
+    const ref = dbRef(db, chatMessagesPath(chatId));
+    const q = query(ref, limitToLast(1));
+    const unsub = onValue(q, snap => {
+      if (!snap.exists()) return;
+      const raw = Object.values(snap.val() || {})[0];
+      if (!raw || typeof raw !== 'object') return;
+      const msg = raw;
+      const chat = ensureChat(chatId);
+      chat.lastMessageTs = Number(msg.ts || chat.lastMessageTs || 0);
+      chat.lastMessageText = msg.deleted || msg.type === 'deleted' ? 'Mensagem apagada' : (msg.type === 'gif' ? 'GIF' : msg.type === 'image' ? '📷 Foto' : msg.text || '');
+      state.social.chats[chatId] = chat;
+      saveSocialState();
+      renderConversationList();
+    }, () => {});
+    state.conversationPreviewUnsubs.push(unsub);
   });
 }
 function openChat(chatId) {
@@ -1049,14 +1128,12 @@ function openChat(chatId) {
   state.lastRenderedMeta = { name: null, ts: 0 };
   elements.messages.innerHTML = '';
 
-  // O Geral vem direto do Firebase. Não renderize o cache local, que pode conter mídia pesada antiga.
-  if (chatId !== 'g:accea-geral') {
-    (chat.messages || []).forEach(msg => {
-      state.messages[msg.id] = msg;
-      state.messageOrder.push(msg.id);
-      renderMessage(msg.id, msg);
-    });
-  }
+  // O Firebase é a fonte de verdade. Não desenhe o cache antigo antes do listener,
+  // evitando mensagens sumirem/reaparecerem quando alguém entra no site.
+  chat.unreadCount = 0;
+  chat.mentionUnread = 0;
+  state.social.chats[chatId] = chat;
+  saveSocialState();
 
   const isGroup = chat.type === 'group';
   const isGeneral = chatId === 'g:accea-geral';
@@ -1186,11 +1263,16 @@ function selectUser(username) {
 async function sendTextMessage(text) {
   if (!state.currentUser || !text.trim() || !auth.currentUser) return;
 
+  const cleanText = text.trim();
+  const mentionedUsers = [...cleanText.matchAll(/@([a-zA-Z0-9._-]+)/g)]
+    .map(m => mkKey(m[1]))
+    .filter(name => !!state.userMap[name]);
   const messageData = {
     type: "text",
     name: state.currentUser.name,
     uid: auth.currentUser.uid,
-    text: text.trim(),
+    text: cleanText,
+    mentions: [...new Set(mentionedUsers)],
     ts: Date.now(),
     deliveredBy: { [state.currentUser.name]: true },
     seenBy: { [state.currentUser.name]: true }
@@ -1428,7 +1510,7 @@ function renderMessage(key, msg) {
   const bubble = document.createElement("div");
   bubble.className = "message-bubble";
 
-  if (!isMe && !grouped) {
+  if (!isMe) {
     const authorName = document.createElement("div");
     authorName.className = "message-author";
     authorName.textContent = msg.name;
@@ -1904,6 +1986,32 @@ function bindGifPicker() {
   });
 }
 
+// Emoji normal do campo de mensagem
+const COMPOSER_EMOJIS = ['😀','😂','🤣','😊','😍','🥰','😘','😎','😭','😡','🤔','😮','😢','🥹','😴','🤯','🤨','😅','🙄','😌','❤️','🧡','💛','💚','💙','💜','🖤','🤍','💔','🔥','✨','🎉','🎀','💀','👀','🙏','👍','👎','👏','🤝','💯','😭','🫶','😈','🤡','🐰','🦈','🌙','⭐'];
+function buildComposerEmojiPicker() {
+  const picker = document.getElementById('composerEmojiPicker');
+  if (!picker) return;
+  picker.innerHTML = COMPOSER_EMOJIS.map(emoji => `<button type="button" class="composer-emoji-option">${emoji}</button>`).join('');
+  picker.querySelectorAll('.composer-emoji-option').forEach(btn => btn.addEventListener('click', () => {
+    const input = elements.textInput;
+    if (!input) return;
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? start;
+    input.value = input.value.slice(0, start) + btn.textContent + input.value.slice(end);
+    input.focus();
+    input.selectionStart = input.selectionEnd = start + btn.textContent.length;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }));
+}
+function toggleComposerEmojiPicker() {
+  const picker = document.getElementById('composerEmojiPicker');
+  if (!picker) return;
+  const next = !picker.classList.contains('show');
+  document.getElementById('gifPicker')?.classList.remove('show');
+  picker.classList.toggle('show', next);
+  picker.setAttribute('aria-hidden', next ? 'false' : 'true');
+}
+
 // Emoji picker
 function buildEmojiPicker() {
   const picker = document.getElementById('emojiPicker');
@@ -1989,6 +2097,32 @@ function clearSearch() {
   elements.searchInput.value = '';
   document.querySelectorAll('.message-wrapper').forEach(msg => msg.classList.remove('search-hidden'));
   elements.searchResultCount.classList.remove('show');
+}
+
+// Notificações de mensagens recebidas
+function showMessageToast(chatId, msg, mentioned = false) {
+  let stack = document.getElementById('messageToastStack');
+  if (!stack) {
+    stack = document.createElement('div');
+    stack.id = 'messageToastStack';
+    document.body.appendChild(stack);
+  }
+  const chat = state.social.chats[chatId] || {};
+  const title = chatId === 'g:accea-geral' ? 'ACCEA' : (chat.name || msg.name || 'Mensagem');
+  const preview = msg.type === 'gif' ? 'GIF' : msg.type === 'image' ? '📷 Foto' : msg.type === 'video' ? '🎥 Vídeo' : (msg.text || 'Mensagem');
+  const toast = document.createElement('button');
+  toast.type = 'button';
+  toast.className = 'message-toast';
+  toast.innerHTML = `<div class="message-toast-avatar">${escapeHtml(initials(msg.name || '?'))}</div><div class="message-toast-body"><strong>${escapeHtml(mentioned ? '@ ' + (msg.name || title) : (msg.name || title))}</strong><span>${escapeHtml(preview.slice(0, 90))}</span></div><i class="fas fa-chevron-right"></i>`;
+  toast.addEventListener('click', () => {
+    openChat(chatId);
+    setTimeout(() => scrollToBottom(true), 50);
+    toast.remove();
+  });
+  stack.prepend(toast);
+  while (stack.children.length > 3) stack.lastElementChild.remove();
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 250); }, 5500);
 }
 
 // Notification system
@@ -2104,6 +2238,9 @@ function bindEvents() {
     e.target.value = '';
   });
 
+  document.addEventListener('pointerdown', unlockNotificationAudio, { once: true });
+  document.addEventListener('keydown', unlockNotificationAudio, { once: true });
+
   elements.textInput?.addEventListener('input', (e) => {
     e.target.style.height = 'auto';
     e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
@@ -2121,6 +2258,8 @@ function bindEvents() {
   });
 
   elements.sendBtn?.addEventListener('click', () => sendTextMessage(elements.textInput.value));
+
+  elements.composerEmojiBtn?.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); toggleComposerEmojiPicker(); });
 
   elements.attachBtn?.addEventListener('click', () => elements.fileInput.click());
 
@@ -2166,6 +2305,9 @@ function bindEvents() {
   });
 
   document.addEventListener('click', (e) => {
+    if (!e.target.closest('#composerEmojiPicker') && !e.target.closest('#composerEmojiBtn')) {
+      document.getElementById('composerEmojiPicker')?.classList.remove('show');
+    }
     if (e.target.closest('.message-bubble')) return;
     document.querySelectorAll('.message-bubble.actions-open').forEach(b => b.classList.remove('actions-open'));
   });
@@ -2411,6 +2553,7 @@ async function login(username, password) {
 
 async function logout() {
   clearSocialFirebaseListeners();
+  clearConversationPreviewListeners();
   detachChatFirebaseListener();
   try {
     await signOutAuth();
@@ -2473,7 +2616,9 @@ async function initChatUI(user) {
   await setPresence(user.name);
   updateUsersUI();
   buildEmojiPicker();
+  buildComposerEmojiPicker();
   bindGifPicker();
+  attachConversationPreviewListeners();
   openChat(state.currentChatId || 'g:accea-geral');
 
   switchSocialTab('conversations');
@@ -2511,6 +2656,7 @@ window.addEventListener("load", async () => {
     sendBtn: document.getElementById("sendBtn"),
     attachBtn: document.getElementById("attachBtn"),
     gifBtn: document.getElementById("gifBtn"),
+    composerEmojiBtn: document.getElementById("composerEmojiBtn"),
     fileInput: document.getElementById("fileInput"),
     composer: document.getElementById("composer"),
     newUsername: document.getElementById("newUsername"),
@@ -2545,6 +2691,7 @@ window.addEventListener("load", async () => {
     if (!firebaseUser) {
       state.currentUser = null;
       clearSocialFirebaseListeners();
+      clearConversationPreviewListeners();
       detachChatFirebaseListener();
       elements.mainView.style.display = 'none';
       elements.loginView.style.display = 'flex';
@@ -3804,6 +3951,7 @@ body.modal-open { overflow: hidden !important; }
       <div class="composer" id="composer">
         <button id="attachBtn" class="composer-btn" title="Anexar foto ou vídeo"><i class="fas fa-paperclip"></i></button>
         <button id="gifBtn" type="button" class="composer-btn gif-btn" title="GIF">GIF</button>
+        <button id="composerEmojiBtn" type="button" class="composer-btn" title="Emoji">😊</button>
         <input type="file" id="fileInput" accept="image/*,video/*" hidden />
         <textarea id="textInput" placeholder="Digite uma mensagem…" rows="1"></textarea>
         <button id="sendBtn" class="composer-btn" title="Send"><i class="fas fa-paper-plane"></i></button>
@@ -3839,6 +3987,7 @@ body.modal-open { overflow: hidden !important; }
 </div>
 
 <!-- Emoji Picker -->
+<div id="composerEmojiPicker" class="composer-emoji-picker" aria-hidden="true"></div>
 <div id="emojiPicker"></div>
 
 <!-- Media Modal -->
@@ -4119,6 +4268,37 @@ html, body {
   overflow-x: hidden !important;
 }
 </style>
+
+<style id="accea-v17-fixes">
+/* v1.7: links, emojis, message notifications and stable conversation ordering */
+.message-link { color: var(--accent-soft); text-decoration: underline; text-underline-offset: 2px; overflow-wrap:anywhere; }
+.message-link:hover { color: var(--accent); }
+.mention.mention-me { background: var(--accent); color: #fff; font-weight: 800; }
+.conversation-name-row { display:flex; align-items:center; gap:6px; min-width:0; }
+.conversation-name-row .conversation-name { flex:1; min-width:0; }
+.conversation-unread { min-width:18px; height:18px; padding:0 5px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; background:var(--accent); color:#fff; font-size:10px; font-weight:800; flex:0 0 auto; }
+.conversation-mention-badge { width:18px; height:18px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:var(--error); color:#fff; font-size:11px; font-weight:900; flex:0 0 auto; }
+#messageToastStack { position:fixed; right:18px; bottom:92px; z-index:200000; width:min(330px, calc(100vw - 28px)); display:flex; flex-direction:column; gap:8px; pointer-events:none; }
+.message-toast { width:100%; border:1px solid var(--border-soft); background:var(--bg-glass-light); backdrop-filter:var(--blur); color:var(--text-primary); border-radius:14px; padding:10px 12px; display:flex; align-items:center; gap:9px; text-align:left; box-shadow:var(--shadow-lg); cursor:pointer; pointer-events:auto; opacity:0; transform:translateY(10px); transition:opacity .2s ease, transform .2s ease; }
+.message-toast.show { opacity:1; transform:translateY(0); }
+.message-toast-avatar { width:32px; height:32px; border-radius:50%; background:var(--accent-glow); color:var(--accent-soft); display:flex; align-items:center; justify-content:center; font-weight:800; font-size:11px; flex:0 0 32px; }
+.message-toast-body { min-width:0; flex:1; display:flex; flex-direction:column; gap:2px; }
+.message-toast-body strong { font-size:12px; }
+.message-toast-body span { font-size:11px; color:var(--text-secondary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.message-toast > i { color:var(--text-tertiary); font-size:10px; }
+#composerEmojiPicker { position:fixed; right:76px; bottom:86px; z-index:100001; width:min(330px,calc(100vw - 28px)); max-height:260px; overflow:auto; padding:10px; display:grid; grid-template-columns:repeat(8,1fr); gap:4px; background:var(--bg-glass-light); backdrop-filter:var(--blur); border:1px solid var(--border-soft); border-radius:14px; box-shadow:var(--shadow-lg); opacity:0; visibility:hidden; transform:translateY(8px); transition:.18s ease; }
+#composerEmojiPicker.show { opacity:1; visibility:visible; transform:translateY(0); }
+.composer-emoji-option { border:0; background:transparent; border-radius:8px; font-size:22px; height:34px; cursor:pointer; }
+.composer-emoji-option:hover { background:var(--bg-elevated); }
+.notification { position:fixed; top:18px; right:18px; z-index:300000; display:flex; align-items:center; gap:8px; max-width:min(360px,calc(100vw - 36px)); padding:10px 13px; border:1px solid var(--border-soft); border-radius:12px; background:var(--bg-glass-light); backdrop-filter:var(--blur); color:var(--text-primary); box-shadow:var(--shadow-lg); font-size:12px; opacity:0; transform:translateY(-8px); transition:.2s ease; }
+.notification.show { opacity:1; transform:translateY(0); }
+.notification.success i { color:var(--success); }
+.notification.error i { color:var(--error); }
+.notification.warning i { color:var(--warning); }
+.notification.info i { color:var(--accent-soft); }
+@media (max-width:600px) { #messageToastStack { right:10px; bottom:80px; width:calc(100vw - 20px); } #composerEmojiPicker { right:10px; bottom:78px; } }
+</style>
+
 </body>
 </html>
 
