@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>ACCEA v1.8.8</title>
+<title>ACCEA v1.8.1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -114,8 +114,7 @@ let state = {
   currentChatId: 'g:accea-geral',
   social: { friends: [], incoming: [], outgoing: [], groups: [], chats: {} },
   notifiedMessageIds: new Set(),
-  conversationPreviewUnsubs: [],
-  chatInitialLoading: false
+  conversationPreviewUnsubs: []
 };
 
 // DOM elements cache
@@ -183,8 +182,6 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-
 function formatText(text) {
   const escaped = escapeHtml(text);
   let formatted = escaped
@@ -200,11 +197,9 @@ function formatText(text) {
     return `${prefix}<a class="message-link" href="${href}" target="_blank" rel="noopener noreferrer">${urlText}</a>${trailing}`;
   });
 
-  // Destaca menções mesmo quando o nome tem acentos, emojis ou símbolos.
-  formatted = formatted.replace(/@([^\s@<]+)/gu, (full, name) => {
-    const cleanName = String(name).replace(/[.,!?;:)]}]+$/u, '');
-    const isMe = mkKey(cleanName) === mkKey(state.currentUser?.name);
-    return `<span class="mention${isMe ? ' mention-me' : ''}">@${escapeHtml(cleanName)}</span>${escapeHtml(String(name).slice(cleanName.length))}`;
+  formatted = formatted.replace(/@([a-zA-Z0-9._-]+)/g, (full, name) => {
+    const isMe = mkKey(name) === mkKey(state.currentUser?.name);
+    return `<span class="mention${isMe ? ' mention-me' : ''}">@${name}</span>`;
   });
 
   return formatted.replace(/\n/g, '<br>');
@@ -1041,91 +1036,14 @@ function notifyIncomingMessage(chatId, msg, firebaseKey) {
 
 function attachChatFirebaseListener(chatId) {
   detachChatFirebaseListener();
-
   const path = chatMessagesPath(chatId);
   const reactionsPath = chatReactionsPath(chatId);
   chatFirebasePath = path;
   state.reactions = {};
 
   const messagesRef = dbRef(db, path);
+  const messagesQuery = query(messagesRef, limitToLast(chatId === 'g:accea-geral' ? 50 : 80));
   const reactionsRef = dbRef(db, reactionsPath);
-
-  // O Geral usa o listener que já estava funcionando. Não reconstruímos
-  // a conversa inteira nem usamos get() para decidir quando renderizar.
-  if (chatId === 'g:accea-geral') {
-    const generalQuery = query(messagesRef, limitToLast(20));
-    const seenKeys = new Set();
-    const childUnsubs = [];
-
-    const addGeneralMessage = (snapshot) => {
-      const key = snapshot.key;
-      const value = snapshot.val();
-      if (!key || !value || typeof value !== 'object' || seenKeys.has(key)) return;
-      seenKeys.add(key);
-
-      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
-      const alreadyKnown = !!state.messages[msg.id];
-      state.messages[msg.id] = msg;
-      if (!state.messageOrder.includes(msg.id)) state.messageOrder.push(msg.id);
-      state.messageOrder.sort((a, b) => Number(state.messages[a]?.ts || 0) - Number(state.messages[b]?.ts || 0));
-      renderMessage(msg.id, msg);
-
-      const isIncoming = mkKey(msg.name) !== mkKey(state.currentUser?.name);
-      updateChatMetadata(chatId, msg, isIncoming);
-      // Histórico inicial não gera notificações. O listener de prévias cuida
-      // das mensagens que chegam enquanto estamos em outra conversa.
-      if (isIncoming && alreadyKnown === false && !state.chatInitialLoading) notifyIncomingMessage(chatId, msg, key);
-
-      if (state.currentChatId === chatId) {
-        setTimeout(() => scrollToBottom(false), 20);
-      }
-    };
-
-    childUnsubs.push(onChildAdded(generalQuery, addGeneralMessage));
-
-    childUnsubs.push(onChildChanged(generalQuery, (snapshot) => {
-      const key = snapshot.key;
-      const value = snapshot.val();
-      if (!key || !value || typeof value !== 'object') return;
-
-      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
-      state.messages[msg.id] = msg;
-
-      const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(msg.id)}"]`);
-      if (wrapper) wrapper.remove();
-      renderMessage(msg.id, msg);
-      updateChatMetadata(chatId, msg, false);
-    }));
-
-    childUnsubs.push(onChildRemoved(generalQuery, (snapshot) => {
-      const key = snapshot.key;
-      const value = snapshot.val();
-      const id = value?.id || key;
-      if (id) delete state.messages[id];
-      const wrapper = id ? elements.messages.querySelector(`[data-message-id="${CSS.escape(id)}"]`) : null;
-      if (wrapper) wrapper.remove();
-      state.messageOrder = state.messageOrder.filter(messageId => messageId !== id);
-    }));
-
-    chatFirebaseUnsub = () => {
-      childUnsubs.forEach(unsub => { try { unsub(); } catch {} });
-      try { chatReactionsUnsub?.(); } catch {}
-      chatReactionsUnsub = null;
-    };
-
-    chatReactionsUnsub = onValue(reactionsRef, (snapshot) => {
-      state.reactions = snapshot.exists() ? snapshot.val() : {};
-      document.querySelectorAll('[data-message-id]').forEach(wrapper => {
-        const messageKey = wrapper.dataset.messageId;
-        const col = wrapper.querySelector('.message-col');
-        if (col) renderReactionsInto(messageKey, col);
-      });
-    }, () => { state.reactions = {}; });
-
-    return;
-  }
-
-  const messagesQuery = query(messagesRef, limitToLast(80));
   const childUnsubs = [];
   const seenKeys = new Set();
   let initialLoading = true;
@@ -1166,7 +1084,9 @@ function attachChatFirebaseListener(chatId) {
     state.messageOrder = state.messageOrder.filter(x => x !== id);
   }));
 
-  initialLoading = false;
+  // Só libera notificações depois que o lote inicial terminou de chegar.
+  get(messagesQuery).finally(() => { initialLoading = false; });
+
   chatFirebaseUnsub = () => {
     childUnsubs.forEach(unsub => { try { unsub(); } catch {} });
     try { chatReactionsUnsub?.(); } catch {}
@@ -1198,33 +1118,14 @@ function attachConversationPreviewListeners() {
   chatIds.forEach(chatId => {
     const ref = dbRef(db, chatMessagesPath(chatId));
     const q = query(ref, limitToLast(1));
-    let lastKey = null;
-    let initialized = false;
-
     const unsub = onValue(q, snap => {
       if (!snap.exists()) return;
-      const entries = Object.entries(snap.val() || {});
-      if (!entries.length) return;
-      const [key, raw] = entries[entries.length - 1];
+      const raw = Object.values(snap.val() || {})[0];
       if (!raw || typeof raw !== 'object') return;
-
-      const isNewMessage = initialized && key !== lastKey;
-      lastKey = key;
-      initialized = true;
-
-      const msg = { ...raw, id: raw.id || key, _firebaseKey: key };
+      const msg = raw;
       const chat = ensureChat(chatId);
       chat.lastMessageTs = Number(msg.ts || chat.lastMessageTs || 0);
       chat.lastMessageText = msg.deleted || msg.type === 'deleted' ? 'Mensagem apagada' : (msg.type === 'gif' ? 'GIF' : msg.type === 'image' ? '📷 Foto' : msg.text || '');
-
-      const isIncoming = mkKey(msg.name) !== mkKey(state.currentUser?.name);
-      const isMention = Array.isArray(msg.mentions) && msg.mentions.includes(mkKey(state.currentUser?.name));
-      if (isNewMessage && isIncoming && state.currentChatId !== chatId) {
-        chat.unreadCount = Number(chat.unreadCount || 0) + 1;
-        if (isMention) chat.mentionUnread = Number(chat.mentionUnread || 0) + 1;
-        notifyIncomingMessage(chatId, msg, key);
-      }
-
       state.social.chats[chatId] = chat;
       saveSocialState();
       renderConversationList();
@@ -1267,9 +1168,7 @@ function openChat(chatId) {
       ? `${Math.max(chat.participants?.length || 0, 2)} participantes`
       : (chat.subtitle || 'Conversa privada');
   renderConversationList();
-  state.chatInitialLoading = true;
   attachChatFirebaseListener(chatId);
-  setTimeout(() => { state.chatInitialLoading = false; }, 250);
   if (window.innerWidth <= 768) document.body.classList.add('show-chat-panel');
   setTimeout(() => scrollToBottom(false), 30);
 }
@@ -1389,13 +1288,9 @@ async function sendTextMessage(text) {
   if (!state.currentUser || !auth.currentUser) return;
   const cleanText = String(text || '').trim();
   if (!cleanText && !state.pendingGif) return;
-  const mentionedUsers = Object.keys(state.userMap || {})
-    .filter(originalName => {
-      const escaped = escapeRegExp(originalName);
-      const re = new RegExp(`@${escaped}(?=$|[\\s.,!?;:)]})`, 'iu');
-      return re.test(cleanText);
-    })
-    .map(mkKey);
+  const mentionedUsers = [...cleanText.matchAll(/@([a-zA-Z0-9._-]+)/g)]
+    .map(m => mkKey(m[1]))
+    .filter(name => !!state.userMap[name]);
   const pendingGif = state.pendingGif;
   const messageData = {
     type: pendingGif && !cleanText ? "gif" : "text",
@@ -1808,7 +1703,7 @@ function renderMessage(key, msg) {
   if (!isMe) {
     markDelivered(key);
     markSeen(key);
-    if (state.currentUser && !state.chatInitialLoading) playNotificationSound();
+    if (state.currentUser) playNotificationSound();
   }
 
   requestAnimationFrame(() => wrapper.classList.add('message-entered'));
@@ -2025,31 +1920,9 @@ function renderGifResults(items) {
   }
 
   items.forEach(gif => {
-    const images = gif.images || {};
-    const original = images.original || images.downsized_large || images.downsized || images.fixed_width;
-    if (!original?.url) return;
-
-    // O GIPHY entrega várias renditions e algumas podem não existir em um GIF específico.
-    // Para Chrome/Chromebook, preferimos WEBP pequeno e depois GIF pequeno.
-    // Mantemos a URL exatamente como veio da API.
-    const previewCandidates = [
-      images.fixed_width_small?.webp,
-      images.fixed_height_small?.webp,
-      images.fixed_width?.webp,
-      images.fixed_height?.webp,
-      images.fixed_width_small?.url,
-      images.fixed_height_small?.url,
-      images.fixed_width?.url,
-      images.fixed_height?.url,
-      images.fixed_width_small_still?.url,
-      images.fixed_height_small_still?.url,
-      images.preview_gif?.url,
-      images.original_still?.url,
-      images.original?.webp,
-      images.original?.url
-    ].filter(Boolean);
-
-    if (!previewCandidates.length) return;
+    const original = gif.images?.original;
+    const preview = gif.images?.fixed_width_small || gif.images?.preview_gif || gif.images?.original;
+    if (!original?.url || !preview?.url) return;
 
     const button = document.createElement('button');
     button.type = 'button';
@@ -2057,34 +1930,17 @@ function renderGifResults(items) {
     button.title = gif.title || 'Enviar GIF';
 
     const img = document.createElement('img');
+    img.src = preview.url;
     img.alt = gif.title || 'GIF';
-    img.loading = 'eager';
-    img.decoding = 'async';
-    let previewIndex = 0;
-    const tryNextPreview = () => {
-      if (previewIndex >= previewCandidates.length) {
-        img.classList.add('gif-image-failed');
-        return;
-      }
-      img.src = previewCandidates[previewIndex++];
-    };
-    img.addEventListener('error', tryNextPreview);
-    img.addEventListener('load', () => img.classList.remove('gif-image-failed'), { once: true });
-    tryNextPreview();
+    img.loading = 'lazy';
     button.appendChild(img);
 
-    button.addEventListener('click', () => {
-      setPendingGif({
-        url: original.url,
-        previewUrl: previewCandidates[0],
-        previewCandidates,
-        width: original.width,
-        height: original.height,
-        title: gif.title || 'GIF'
-      });
-      closeGifPicker();
-      requestAnimationFrame(() => document.getElementById('gifAttachmentPreview')?.scrollIntoView({block:'nearest'}));
-    });
+    button.addEventListener('click', () => sendGifMessage({
+      url: original.url,
+      width: original.width,
+      height: original.height,
+      title: gif.title || 'GIF'
+    }));
 
     results.appendChild(button);
   });
@@ -2126,59 +1982,29 @@ async function searchGiphyLocal(query) {
 function setPendingGif(gif) {
   state.pendingGif = gif?.url ? {
     url: gif.url,
-    previewUrl: gif.previewUrl || gif.url,
-    previewCandidates: Array.isArray(gif.previewCandidates) && gif.previewCandidates.length
-      ? gif.previewCandidates
-      : [gif.previewUrl, gif.url].filter(Boolean),
     width: Number(gif.width) || 0,
     height: Number(gif.height) || 0,
     title: gif.title || 'GIF'
   } : null;
-
   const preview = document.getElementById('gifAttachmentPreview');
   if (!preview) return;
   preview.innerHTML = '';
-
   if (!state.pendingGif) {
     preview.classList.remove('show');
-    preview.setAttribute('aria-hidden', 'true');
     return;
   }
-
-  // Mostra a caixa imediatamente, mesmo antes da imagem terminar de carregar.
-  preview.classList.add('show');
-  preview.setAttribute('aria-hidden', 'false');
-
   const img = document.createElement('img');
-  img.alt = state.pendingGif.title || 'GIF selecionado';
-  img.loading = 'eager';
-  img.decoding = 'async';
-  img.referrerPolicy = 'no-referrer';
-  img.className = 'gif-attachment-image';
-
-  const attachmentCandidates = [...new Set(state.pendingGif.previewCandidates)].filter(Boolean);
-  let attachmentIndex = 0;
-  const loadAttachmentPreview = () => {
-    if (attachmentIndex >= attachmentCandidates.length) {
-      img.classList.add('gif-image-failed');
-      return;
-    }
-    img.classList.remove('gif-image-failed');
-    img.src = attachmentCandidates[attachmentIndex++];
-  };
-  img.addEventListener('error', loadAttachmentPreview);
-
+  img.src = state.pendingGif.url;
+  img.alt = state.pendingGif.title;
   const label = document.createElement('span');
   label.textContent = 'GIF anexado';
-
   const close = document.createElement('button');
   close.type = 'button';
   close.title = 'Remover GIF';
   close.innerHTML = '<i class="fas fa-xmark"></i>';
-  close.addEventListener('click', clearPendingGif);
-
+  close.onclick = clearPendingGif;
   preview.append(img, label, close);
-  loadAttachmentPreview();
+  preview.classList.add('show');
   updateComposerState();
 }
 
@@ -2359,7 +2185,7 @@ function showMessageToast(chatId, msg, mentioned = false) {
   const toast = document.createElement('button');
   toast.type = 'button';
   toast.className = 'message-toast';
-  toast.innerHTML = `<div class="message-toast-avatar">${escapeHtml(initials(msg.name || '?'))}</div><div class="message-toast-body"><strong>${escapeHtml(mentioned ? '@' + state.currentUser.name : (msg.name || title))}</strong><span>${escapeHtml(mentioned ? `${msg.name || title}: ${preview}` : preview).slice(0, 90)}</span></div><i class="fas fa-chevron-right"></i>`;
+  toast.innerHTML = `<div class="message-toast-avatar">${escapeHtml(initials(msg.name || '?'))}</div><div class="message-toast-body"><strong>${escapeHtml(mentioned ? '@ ' + (msg.name || title) : (msg.name || title))}</strong><span>${escapeHtml(preview.slice(0, 90))}</span></div><i class="fas fa-chevron-right"></i>`;
   toast.addEventListener('click', () => {
     openChat(chatId);
     setTimeout(() => scrollToBottom(true), 50);
@@ -2917,7 +2743,7 @@ async function initChatUI(user) {
 }
 
 // Initialize app
-window.addEventListener("DOMContentLoaded", async () => {
+window.addEventListener("load", async () => {
   Object.assign(elements, {
     loginView: document.getElementById("loginView"),
     mainView: document.getElementById("mainView"),
@@ -3588,7 +3414,6 @@ mark {
   display: flex; flex-direction: column; gap: 3px; scroll-behavior: smooth;
 }
 
-.app-version { font-size: 10px; font-weight: 700; opacity: .55; margin-left: 5px; vertical-align: middle; }
 .date-divider {
   display: flex; align-items: center; justify-content: center;
   margin: 18px 0 10px; position: relative;
@@ -4133,14 +3958,6 @@ body.modal-open { overflow: hidden !important; }
   }
 }
 </style>
-
-<style id="accea-v18-gif-preview-fix">
-/* v1.8.8: prévia do GIF robusta, sem lazy loading e com fallback de renditions. */
-.gif-result img { display:block; width:100%; height:100px; object-fit:cover; background:var(--bg-tertiary); }
-.gif-result img.gif-image-failed { opacity:.35; }
-#gifAttachmentPreview img { display:block; width:48px; height:38px; object-fit:cover; background:var(--bg-tertiary); }
-#gifAttachmentPreview img.gif-image-failed { opacity:.35; }
-</style>
 </head>
 <body data-theme="dark">
 
@@ -4177,7 +3994,7 @@ body.modal-open { overflow: hidden !important; }
     <div class="panel-header">
       <div class="header-left">
         <div class="header-logo">🐰</div>
-        <div class="header-title">ACCEA <span class="app-version">v1.8.6</span></div>
+        <div class="header-title">ACCEA</div>
       </div>
       <div class="header-actions">
         <button id="themeToggle" class="icon-button" title="Toggle theme"><i class="fas fa-moon"></i></button>
@@ -4504,10 +4321,10 @@ html, body {
 
 
 <style id="accea-v18-fixes">
-/* v1.8.6: versão auditada, emoji completo, GIF + texto juntos e sessão limitada à aba */
-#gifAttachmentPreview { display:none !important; align-items:center; gap:8px; margin:0 0 7px; padding:7px 9px; width:max-content; max-width:100%; box-sizing:border-box; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-tertiary); color:var(--text-secondary); position:relative; z-index:2; min-height:52px; }
-#gifAttachmentPreview.show { display:flex !important; }
-#gifAttachmentPreview img { display:block !important; width:72px; height:48px; object-fit:cover; border-radius:7px; background:var(--bg-elevated); flex:0 0 72px; }
+/* v1.8: emoji completo, GIF + texto juntos e sessão limitada à aba */
+#gifAttachmentPreview { display:none; align-items:center; gap:8px; margin:0 0 7px; padding:7px 9px; width:max-content; max-width:100%; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-tertiary); color:var(--text-secondary); }
+#gifAttachmentPreview.show { display:flex; }
+#gifAttachmentPreview img { width:48px; height:38px; object-fit:cover; border-radius:7px; }
 #gifAttachmentPreview span { font-size:11px; font-weight:700; }
 #gifAttachmentPreview button { width:26px; height:26px; border:0; border-radius:50%; background:transparent; color:var(--text-tertiary); cursor:pointer; }
 #gifAttachmentPreview button:hover { background:var(--bg-elevated); color:var(--error); }
