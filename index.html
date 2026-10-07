@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>ACCEA v1.7</title>
+<title>ACCEA v1.8.1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -2290,7 +2290,10 @@ function bindEvents() {
     showNotification(`Sound ${state.soundEnabled ? 'on' : 'off'}.`, 'info');
   });
 
-  elements.loginButton?.addEventListener('click', () => login(elements.usernameLogin.value, elements.passLogin.value));
+  if (elements.loginButton) {
+    elements.loginButton.type = 'button';
+    elements.loginButton.onclick = () => login(elements.usernameLogin.value, elements.passLogin.value);
+  }
 
   [elements.usernameLogin, elements.passLogin].forEach(input => {
     input.addEventListener("keydown", (e) => {
@@ -2468,9 +2471,33 @@ function attachFirebaseListeners() {
 }
 
 // Login / account system
-function authEmailForUsername(username) {
+function legacyAuthEmailForUsername(username) {
   const safe = mkKey(username).replace(/[^a-z0-9._-]/g, '_');
   return `${safe}@accea.app`;
+}
+
+// O nome visível pode conter letras, números, acentos, emojis e pontuação.
+// O Firebase Authentication, porém, precisa de um e-mail técnico válido.
+// Usamos um identificador curto e determinístico para não alterar o nome exibido.
+function authEmailForUsername(username) {
+  const value = mkKey(username);
+  let hash = 1469598103934665603n;
+  for (const ch of value) {
+    hash ^= BigInt(ch.codePointAt(0));
+    hash = BigInt.asUintN(64, hash * 1099511628211n);
+  }
+  const token = hash.toString(16).padStart(16, '0');
+  return `u${token}@accea.app`;
+}
+
+function validateUsername(username) {
+  const name = String(username || '').trim();
+  if (!name) return 'Digite um nome de usuário.';
+  if ([...name].length < 3) return 'O nome precisa ter pelo menos 3 caracteres.';
+  if ([...name].length > 30) return 'O nome pode ter no máximo 30 caracteres.';
+  // Estes caracteres não podem existir em uma chave do Realtime Database.
+  if (/[.#$\[\]\/]/.test(name)) return 'Use outro caractere no lugar de . # $ [ ] ou /. ';
+  return '';
 }
 
 function firebaseAuthMessage(error) {
@@ -2540,13 +2567,14 @@ async function ensureUserProfile(username, uid, role = 'user') {
 
 async function registerAccount(username, password) {
   const name = mkKey(username);
+  const nameError = validateUsername(username);
 
-  if (!name || !password) {
-    showNotification('Digite um nome de usuário e uma senha.', 'warning');
+  if (nameError) {
+    showNotification(nameError, 'warning');
     return;
   }
-  if (!/^[a-z0-9._-]{3,30}$/.test(name)) {
-    showNotification('Use 3 a 30 caracteres: letras, números, ponto, _ ou -.', 'warning');
+  if (!password) {
+    showNotification('Digite uma senha.', 'warning');
     return;
   }
   if (password.length < 6) {
@@ -2595,8 +2623,13 @@ window.ACCEA_REGISTER = function () {
 async function login(username, password) {
   clearLoginMessage();
   const name = mkKey(username);
-  if (!name || !password) {
-    showLoginMessage('Digite seu nome de usuário e sua senha.', 'warning');
+  const nameError = validateUsername(username);
+  if (nameError) {
+    showLoginMessage(nameError, 'warning');
+    return;
+  }
+  if (!password) {
+    showLoginMessage('Digite sua senha.', 'warning');
     return;
   }
 
@@ -2605,17 +2638,29 @@ async function login(username, password) {
     elements.loginButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Entrando...';
     await authPersistenceReady;
 
-    const credential = await signInWithEmailAndPassword(auth, authEmailForUsername(name), password);
+    let credential;
+    try {
+      credential = await signInWithEmailAndPassword(auth, authEmailForUsername(name), password);
+    } catch (newEmailError) {
+      // Contas antigas do ACCEA usavam o e-mail técnico baseado no nome.
+      // Tenta esse formato somente como compatibilidade.
+      if (!['auth/invalid-credential', 'auth/user-not-found', 'auth/invalid-login-credentials', 'auth/wrong-password'].includes(newEmailError?.code)) throw newEmailError;
+      credential = await signInWithEmailAndPassword(auth, legacyAuthEmailForUsername(name), password);
+    }
+
+    let role = state.userMap[name]?.role || 'user';
     const existing = state.userMap[name] || {};
-    const user = {
-      name,
-      role: existing.role || 'user',
-      uid: credential.user.uid
-    };
+    try {
+      const snapshot = await get(child(usersRef, name));
+      if (snapshot.exists()) role = snapshot.val()?.role || role;
+    } catch (_) {}
+
+    const user = { name, role, uid: credential.user.uid };
     sessionStorage.setItem('kikochat_user', JSON.stringify(user));
     clearLoginMessage();
     await initChatUI(user);
   } catch (error) {
+    console.error('ACCEA login:', error);
     showLoginMessage(firebaseAuthMessage(error), 'error');
   } finally {
     elements.loginButton.disabled = false;
@@ -2777,13 +2822,12 @@ window.addEventListener("load", async () => {
       let stored = null;
       try { stored = JSON.parse(sessionStorage.getItem('kikochat_user') || 'null'); } catch {}
 
-      const emailName = String(firebaseUser.email || '').split('@')[0];
       const storedName = mkKey(stored?.name || '');
-      const emailUserName = mkKey(emailName || '');
 
       // Se já existe uma sessão do ACCEA nesta aba, ela precisa corresponder
-      // ao Firebase Auth atual. Se não existe, usamos o nome técnico do e-mail
-      // apenas para restaurar uma sessão legítima desta mesma aba.
+      // ao Firebase Auth atual. Se não existe, procura o perfil pelo authUid.
+      // Isso é importante porque o e-mail técnico de autenticação não é mais
+      // igual ao nome que a pessoa escolheu.
       if (stored?.uid && stored.uid !== firebaseUser.uid) {
         console.warn('Sessão da aba não corresponde ao Firebase Auth. Limpando sessão local.');
         sessionStorage.removeItem('kikochat_user');
@@ -2791,7 +2835,26 @@ window.addEventListener("load", async () => {
         return;
       }
 
-      const name = storedName || emailUserName;
+      let name = storedName;
+      if (!name) {
+        try {
+          const usersSnapshot = await get(usersRef);
+          if (usersSnapshot.exists()) {
+            const usersData = usersSnapshot.val() || {};
+            const match = Object.entries(usersData).find(([key, value]) => String(value?.authUid || '') === firebaseUser.uid);
+            if (match) name = mkKey(match[0]);
+          }
+        } catch (lookupError) {
+          console.warn('Não foi possível localizar o perfil pelo authUid:', lookupError);
+        }
+      }
+
+      // Compatibilidade com contas antigas, criadas antes do e-mail técnico por hash.
+      if (!name) {
+        const legacyEmailName = mkKey(String(firebaseUser.email || '').split('@')[0]);
+        name = legacyEmailName;
+      }
+
       if (!name) {
         await signOutAuth(auth);
         return;
@@ -2808,6 +2871,8 @@ window.addEventListener("load", async () => {
     }
   });
 });
+
+window.ACCEA_LOGIN = login;
 
 window.ACCEA = {
   sendTextMessage, uploadAndSendFile, createUser, clearChat, exportChat, login, logout, registerAccount, setTheme, toggleReaction, openDeleteMenu, deleteForMeOnly, deleteForEveryoneLocal,
@@ -4079,143 +4144,25 @@ body.modal-open { overflow: hidden !important; }
 
 <script id="accea-register-fallback">
 (function () {
-  const API_KEY = "AIzaSyBg8hTrPFUdJk3Ryb0a_guXzfzn4vdoGDU";
-  const SIGNUP_URL = "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=" + encodeURIComponent(API_KEY);
-
-  function normalizeUsername(value) {
-    return String(value || "").trim().toLowerCase();
-  }
-
-  function toast(message, type) {
-    try {
-      if (typeof window.showNotification === "function") {
-        window.showNotification(message, type || "info");
-        return;
-      }
-    } catch (_) {}
-
-    let box = document.getElementById("accea-direct-toast");
-    if (!box) {
-      box = document.createElement("div");
-      box.id = "accea-direct-toast";
-      box.style.cssText = "position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:999999;max-width:90vw;padding:12px 16px;border-radius:10px;background:#1b2230;color:#fff;font:14px Arial,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35);text-align:center;";
-      document.body.appendChild(box);
-    }
-    box.textContent = message;
-    box.style.display = "block";
-    clearTimeout(box._timer);
-    box._timer = setTimeout(() => { box.style.display = "none"; }, 3500);
-  }
-
-  function firebaseErrorMessage(code) {
-    const map = {
-      "EMAIL_EXISTS": "Esse nome de usuário já está em uso.",
-      "INVALID_EMAIL": "Nome de usuário inválido.",
-      "WEAK_PASSWORD : Password should be at least 6 characters": "A senha precisa ter pelo menos 6 caracteres.",
-      "TOO_MANY_ATTEMPTS_TRY_LATER": "Muitas tentativas. Espere um pouco e tente novamente.",
-      "OPERATION_NOT_ALLOWED": "O login por e-mail e senha não está ativado no Firebase."
-    };
-    return map[code] || "Não foi possível criar a conta. Verifique o Firebase e tente novamente.";
-  }
-
-  async function createAccountDirect() {
-    const usernameInput = document.getElementById("usernameLogin");
-    const passwordInput = document.getElementById("passLogin");
-    const button = document.getElementById("registerButton");
-    const username = normalizeUsername(usernameInput && usernameInput.value);
-    const password = String((passwordInput && passwordInput.value) || "");
-
-    if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
-      toast("Use 3 a 30 caracteres: letras, números, ponto, _ ou -.", "warning");
-      if (usernameInput) usernameInput.focus();
-      return;
-    }
-    if (password.length < 6) {
-      toast("A senha precisa ter pelo menos 6 caracteres.", "warning");
-      if (passwordInput) passwordInput.focus();
-      return;
-    }
-
-    const email = username.replace(/[^a-z0-9._-]/g, "_") + "@accea.app";
-    if (button) {
-      button.disabled = true;
-      button.dataset.oldText = button.textContent;
-      button.textContent = "Criando...";
-    }
-
-    try {
-      const response = await fetch(SIGNUP_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, returnSecureToken: true })
-      });
-
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const code = data?.error?.message || "UNKNOWN_ERROR";
-        throw new Error(code);
-      }
-
-      // Cria também o perfil em /users imediatamente, para que outras contas
-      // consigam encontrar este usuário ao adicionar amigos.
-      const profilePayload = {
-        role: "user",
-        authUid: data.localId,
-        profile: {
-          avatarColor: "",
-          avatarUrl: "",
-          status: "Disponível",
-          joinDate: { ".sv": "timestamp" }
-        }
-      };
-      const profileUrl = "https://accea-ee9d8-default-rtdb.firebaseio.com/users/" + encodeURIComponent(username) + ".json?auth=" + encodeURIComponent(data.idToken);
-      const profileResponse = await fetch(profileUrl, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(profilePayload)
-      });
-      if (!profileResponse.ok) {
-        const profileError = await profileResponse.json().catch(() => ({}));
-        console.warn("Perfil não criado no Realtime Database:", profileError);
-      }
-
-      // Guarda somente uma indicação local do último nome criado. A senha nunca é salva aqui.
-      sessionStorage.setItem("accea_last_registered", username);
-      toast("Conta @" + username + " criada com sucesso. Agora clique em Entrar.", "success");
-      if (passwordInput) passwordInput.value = "";
-      if (usernameInput) usernameInput.focus();
-    } catch (error) {
-      toast(firebaseErrorMessage(error?.message || ""), "error");
-      console.error("ACCEA cadastro direto:", error);
-    } finally {
-      if (button) {
-        button.disabled = false;
-        button.textContent = button.dataset.oldText || "Criar conta";
-      }
-    }
-  }
-
-  window.ACCEA_REGISTER = createAccountDirect;
-
   function bindRegisterButton() {
-    const button = document.getElementById("registerButton");
-    if (!button || button.dataset.acceaBound === "1") return;
-    button.dataset.acceaBound = "1";
-    button.type = "button";
-    button.disabled = false;
-    button.addEventListener("click", function (event) {
+    const button = document.getElementById('registerButton');
+    if (!button || button.dataset.acceaBound === '1') return;
+    button.dataset.acceaBound = '1';
+    button.type = 'button';
+    button.addEventListener('click', function (event) {
       event.preventDefault();
       event.stopPropagation();
-      createAccountDirect();
+      if (typeof window.ACCEA_REGISTER === 'function') {
+        window.ACCEA_REGISTER();
+      } else {
+        const box = document.getElementById('loginMessage');
+        if (box) { box.textContent = 'O ACCEA ainda está carregando. Tente novamente.'; box.style.display = 'block'; }
+      }
     });
   }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bindRegisterButton, { once: true });
-  } else {
-    bindRegisterButton();
-  }
-  window.addEventListener("load", bindRegisterButton, { once: true });
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bindRegisterButton, { once: true });
+  else bindRegisterButton();
+  window.addEventListener('load', bindRegisterButton, { once: true });
 })();
 </script>
 
