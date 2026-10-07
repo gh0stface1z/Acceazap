@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>ACCEA v1.8.6</title>
+<title>ACCEA v1.8.8</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -2025,9 +2025,31 @@ function renderGifResults(items) {
   }
 
   items.forEach(gif => {
-    const original = gif.images?.original;
-    const preview = gif.images?.fixed_width_small || gif.images?.preview_gif || gif.images?.original;
-    if (!original?.url || !preview?.url) return;
+    const images = gif.images || {};
+    const original = images.original || images.downsized_large || images.downsized || images.fixed_width;
+    if (!original?.url) return;
+
+    // O GIPHY entrega várias renditions e algumas podem não existir em um GIF específico.
+    // Para Chrome/Chromebook, preferimos WEBP pequeno e depois GIF pequeno.
+    // Mantemos a URL exatamente como veio da API.
+    const previewCandidates = [
+      images.fixed_width_small?.webp,
+      images.fixed_height_small?.webp,
+      images.fixed_width?.webp,
+      images.fixed_height?.webp,
+      images.fixed_width_small?.url,
+      images.fixed_height_small?.url,
+      images.fixed_width?.url,
+      images.fixed_height?.url,
+      images.fixed_width_small_still?.url,
+      images.fixed_height_small_still?.url,
+      images.preview_gif?.url,
+      images.original_still?.url,
+      images.original?.webp,
+      images.original?.url
+    ].filter(Boolean);
+
+    if (!previewCandidates.length) return;
 
     const button = document.createElement('button');
     button.type = 'button';
@@ -2035,18 +2057,34 @@ function renderGifResults(items) {
     button.title = gif.title || 'Enviar GIF';
 
     const img = document.createElement('img');
-    img.src = preview.url;
     img.alt = gif.title || 'GIF';
-    img.loading = 'lazy';
+    img.loading = 'eager';
+    img.decoding = 'async';
+    let previewIndex = 0;
+    const tryNextPreview = () => {
+      if (previewIndex >= previewCandidates.length) {
+        img.classList.add('gif-image-failed');
+        return;
+      }
+      img.src = previewCandidates[previewIndex++];
+    };
+    img.addEventListener('error', tryNextPreview);
+    img.addEventListener('load', () => img.classList.remove('gif-image-failed'), { once: true });
+    tryNextPreview();
     button.appendChild(img);
 
-    button.addEventListener('click', () => sendGifMessage({
-      url: original.url,
-      previewUrl: preview.url,
-      width: original.width,
-      height: original.height,
-      title: gif.title || 'GIF'
-    }));
+    button.addEventListener('click', () => {
+      setPendingGif({
+        url: original.url,
+        previewUrl: previewCandidates[0],
+        previewCandidates,
+        width: original.width,
+        height: original.height,
+        title: gif.title || 'GIF'
+      });
+      closeGifPicker();
+      requestAnimationFrame(() => document.getElementById('gifAttachmentPreview')?.scrollIntoView({block:'nearest'}));
+    });
 
     results.appendChild(button);
   });
@@ -2089,33 +2127,58 @@ function setPendingGif(gif) {
   state.pendingGif = gif?.url ? {
     url: gif.url,
     previewUrl: gif.previewUrl || gif.url,
+    previewCandidates: Array.isArray(gif.previewCandidates) && gif.previewCandidates.length
+      ? gif.previewCandidates
+      : [gif.previewUrl, gif.url].filter(Boolean),
     width: Number(gif.width) || 0,
     height: Number(gif.height) || 0,
     title: gif.title || 'GIF'
   } : null;
+
   const preview = document.getElementById('gifAttachmentPreview');
   if (!preview) return;
   preview.innerHTML = '';
+
   if (!state.pendingGif) {
     preview.classList.remove('show');
+    preview.setAttribute('aria-hidden', 'true');
     return;
   }
+
+  // Mostra a caixa imediatamente, mesmo antes da imagem terminar de carregar.
+  preview.classList.add('show');
+  preview.setAttribute('aria-hidden', 'false');
+
   const img = document.createElement('img');
-  img.src = state.pendingGif.previewUrl || state.pendingGif.url;
-  img.alt = state.pendingGif.title;
+  img.alt = state.pendingGif.title || 'GIF selecionado';
   img.loading = 'eager';
-  img.onerror = () => {
-    if (img.src !== state.pendingGif.url) img.src = state.pendingGif.url;
+  img.decoding = 'async';
+  img.referrerPolicy = 'no-referrer';
+  img.className = 'gif-attachment-image';
+
+  const attachmentCandidates = [...new Set(state.pendingGif.previewCandidates)].filter(Boolean);
+  let attachmentIndex = 0;
+  const loadAttachmentPreview = () => {
+    if (attachmentIndex >= attachmentCandidates.length) {
+      img.classList.add('gif-image-failed');
+      return;
+    }
+    img.classList.remove('gif-image-failed');
+    img.src = attachmentCandidates[attachmentIndex++];
   };
+  img.addEventListener('error', loadAttachmentPreview);
+
   const label = document.createElement('span');
   label.textContent = 'GIF anexado';
+
   const close = document.createElement('button');
   close.type = 'button';
   close.title = 'Remover GIF';
   close.innerHTML = '<i class="fas fa-xmark"></i>';
-  close.onclick = clearPendingGif;
+  close.addEventListener('click', clearPendingGif);
+
   preview.append(img, label, close);
-  preview.classList.add('show');
+  loadAttachmentPreview();
   updateComposerState();
 }
 
@@ -2854,7 +2917,7 @@ async function initChatUI(user) {
 }
 
 // Initialize app
-window.addEventListener("load", async () => {
+window.addEventListener("DOMContentLoaded", async () => {
   Object.assign(elements, {
     loginView: document.getElementById("loginView"),
     mainView: document.getElementById("mainView"),
@@ -4070,6 +4133,14 @@ body.modal-open { overflow: hidden !important; }
   }
 }
 </style>
+
+<style id="accea-v18-gif-preview-fix">
+/* v1.8.8: prévia do GIF robusta, sem lazy loading e com fallback de renditions. */
+.gif-result img { display:block; width:100%; height:100px; object-fit:cover; background:var(--bg-tertiary); }
+.gif-result img.gif-image-failed { opacity:.35; }
+#gifAttachmentPreview img { display:block; width:48px; height:38px; object-fit:cover; background:var(--bg-tertiary); }
+#gifAttachmentPreview img.gif-image-failed { opacity:.35; }
+</style>
 </head>
 <body data-theme="dark">
 
@@ -4434,9 +4505,9 @@ html, body {
 
 <style id="accea-v18-fixes">
 /* v1.8.6: versão auditada, emoji completo, GIF + texto juntos e sessão limitada à aba */
-#gifAttachmentPreview { display:none; align-items:center; gap:8px; margin:0 0 7px; padding:7px 9px; width:max-content; max-width:100%; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-tertiary); color:var(--text-secondary); }
-#gifAttachmentPreview.show { display:flex; }
-#gifAttachmentPreview img { width:48px; height:38px; object-fit:cover; border-radius:7px; }
+#gifAttachmentPreview { display:none !important; align-items:center; gap:8px; margin:0 0 7px; padding:7px 9px; width:max-content; max-width:100%; box-sizing:border-box; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-tertiary); color:var(--text-secondary); position:relative; z-index:2; min-height:52px; }
+#gifAttachmentPreview.show { display:flex !important; }
+#gifAttachmentPreview img { display:block !important; width:72px; height:48px; object-fit:cover; border-radius:7px; background:var(--bg-elevated); flex:0 0 72px; }
 #gifAttachmentPreview span { font-size:11px; font-weight:700; }
 #gifAttachmentPreview button { width:26px; height:26px; border:0; border-radius:50%; background:transparent; color:var(--text-tertiary); cursor:pointer; }
 #gifAttachmentPreview button:hover { background:var(--bg-elevated); color:var(--error); }
