@@ -18,7 +18,7 @@ import {
   onAuthStateChanged,
   deleteUser,
   setPersistence,
-  browserLocalPersistence
+  browserSessionPersistence
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 import {
   getDatabase, ref as dbRef, push, onChildAdded, onChildChanged, onChildRemoved, remove, set, get, child, update, onValue, onDisconnect, serverTimestamp, query, limitToLast
@@ -40,7 +40,7 @@ const auth = getAuth(app);
 const db = getDatabase(app);
 // A sessão do ACCEA não deve ser reutilizada automaticamente em outro navegador/dispositivo.
 // Ela permanece durante a sessão desta aba e é descartada quando a sessão termina.
-const authPersistenceReady = setPersistence(auth, browserLocalPersistence).catch(err => {
+const authPersistenceReady = setPersistence(auth, browserSessionPersistence).catch(err => {
   console.error("Não foi possível configurar a persistência do Firebase:", err);
 });
 
@@ -65,7 +65,30 @@ const friendRequestsRef = dbRef(db, FRIEND_REQUESTS_PATH);
 const friendshipsRef = dbRef(db, FRIENDSHIPS_PATH);
 let socialFirebaseUnsubs = [];
 
-const EMOJI_SET = ["👍","❤️","😂","😮","😢","🙏","🔥","🎉","👀","💯"];
+const EMOJI_SET = (() => {
+  const out = new Set([
+    "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😗","😙","😚","😋","😛","😝","😜","🤪","🤨","🧐","🤓","😎","🤩","🥳","😏","😒","😞","😔","😟","😕","🙁","☹️","😣","😖","😫","😩","🥺","😢","😭","😤","😠","😡","🤬","🤯","😳","🥵","🥶","😱","😨","😰","😥","😓","🤗","🤔","🫣","🤭","🫢","🫡","🤫","🫠","🤥","😶","🫥","😐","🫤","😑","😬","🙄","😯","😦","😧","😮","😲","🥱","😴","🤤","😪","😵","🫨","🤐","🥴","🤢","🤮","🤧","😷","🤒","🤕",
+    "👍","👎","👌","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","✋","🤚","🖐️","🖖","👋","🤏","💪","🙏","👏","🙌","🫶","🤝","💅","👀","🧠","👄","👂","👃","👶","🧒","👦","👧","🧑","👱","👨","👩","🧔","👵","👴","🧓","🎅","🤰","🙇","💁","🙅","🙆","🙋","🧏","🤦","🤷","🧘","🏃","🚶","💃","🕺","👯","🧖","🛀","🧗","🏄","🏊","🤽","🚴","🏋️","🤸","🤼","🤾","⛹️","🤹","🧜","🧚","🧛","🧟","🧞","🦸","🦹","🥷","👮","👷","💂","🕵️","👩‍⚕️","👨‍⚕️","👩‍🏫","👨‍🏫","👩‍🚀","👨‍🚀","👩‍🎨","👨‍🎨","👩‍💻","👨‍💻",
+    "❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","🩷","🩵","🩶","💔","❣️","💕","💞","💓","💗","💖","💘","💝","💟","💌","💋","💯","💢","💥","💫","💦","💨","🔥","✨","⭐","🌟","💤","🎉","🎊","🎀","🎁","🏆","🥇","🥈","🥉","🎯","🎮","🎵","🎶","🎬","📸","📱","💻","⌨️","🖥️","📷","🔔","🔕","💡","🔗","📌","📍","✏️","📝","📎","📚","💰","💎","🔑","🔒","🔓","❤️‍🔥","❤️‍🩹","💀","☠️","👻","👽","🤖","🎃","😈","👿","🤡","💩","😺","😸","😹","😻","😼","😽","🙀","😿","😾",
+    "🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐒","🐔","🐧","🐦","🐤","🐣","🐥","🦆","🦅","🦉","🦇","🐺","🐗","🐴","🦄","🐝","🪲","🐛","🦋","🐌","🐞","🐜","🕷️","🦂","🐢","🐍","🦎","🦖","🦕","🐙","🦑","🦀","🦞","🦐","🐠","🐟","🐡","🦈","🐬","🐳","🐋","🦭","🐊","🐅","🐆","🦓","🦍","🐘","🦏","🦒","🐪","🐫","🦘","🦬","🐄","🐎","🐖","🐑","🦙","🐐","🦌","🐕","🐈","🐓","🦃","🦚","🦜","🐇","🐁","🐀","🐿️","🦔",
+    "🌸","💐","🌷","🌹","🥀","🌺","🌻","🌼","🌱","🌿","🍀","🍃","🍂","🍁","🌵","🌲","🌳","🌴","🌱","🌈","☀️","🌤️","⛅","🌥️","🌦️","🌧️","⛈️","🌩️","🌨️","❄️","☃️","⛄","🌪️","🌫️","🌙","🌛","🌜","🌝","🌚","⭐","🌟","🌌","🌊","🔥","☄️","🪐","🌍","🌎","🌏","🌕","🌑","🌒","🌓","🌔","🌖","🌗","🌘","🌙",
+    "🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍈","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🥑","🍆","🥔","🥕","🌽","🌶️","🥒","🥬","🥦","🧄","🧅","🍞","🥐","🥖","🧀","🥚","🍳","🧈","🥞","🧇","🥓","🥩","🍗","🍔","🍟","🍕","🌭","🥪","🌮","🌯","🥗","🍣","🍱","🍜","🍝","🍩","🍪","🎂","🍰","🧁","🍫","🍭","🍬","🍿","☕","🧋","🥤","🧃","🍵","🍺","🍻","🍷","🥂","🍹","🧊",
+    "⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🥏","🎱","🪀","🏓","🏸","🥅","⛳","🪁","🏹","🎣","🥊","🥋","⛸️","🛷","⛷️","🏂","🏋️","🤼","🤸","🏆","🥇","🥈","🥉","🎮","🕹️","🎲","♟️","🎭","🎨","🎼","🎹","🥁","🎸","🎺","🎻","🎤","🎧","🎵","🎶",
+    "🚗","🚕","🚙","🚌","🚎","🏎️","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🛵","🏍️","🚲","🛴","✈️","🚀","🛸","🚁","🚢","⛵","🚤","🚂","🚆","🚇","🚉","🚦","🚧","🗺️","🧭","🏠","🏡","🏢","🏫","🏥","🏖️","🏝️","🏕️","⛺","🗼","🗽","🗿","🗻","🏰","🏯",
+    "🔴","🟠","🟡","🟢","🔵","🟣","⚫","⚪","🟤","🔺","🔻","🔸","🔹","🔶","🔷","▪️","▫️","◼️","◻️","◾","◽","🔳","🔲","⭕","❌","❗","❓","‼️","⁉️","➕","➖","✖️","➗","♾️","✔️","☑️","✅","❎","⚠️","🚫","⛔","🔞","♻️","©️","®️","™️","💲","💱","⚡","☮️","✝️","☪️","🕉️","☯️","☦️","🛐","♈","♉","♊","♋","♌","♍","♎","♏","♐","♑","♒","♓","⛎","🔀","🔁","🔂","▶️","⏸️","⏹️","⏺️","⏭️","⏮️","🔊","🔇","🔔","🔕","📢","📣","💬","💭","🗯️"
+  ]);
+  const emojiPresentation = /\\p{Emoji_Presentation}/u;
+  const ranges = [[0x1F000,0x1FAFF],[0x1FC00,0x1FF00],[0x1F1E6,0x1F1FF]];
+  for (const [a,b] of ranges) for (let cp=a; cp<=b; cp++) {
+    const ch = String.fromCodePoint(cp);
+    if (emojiPresentation.test(ch)) out.add(ch);
+  }
+  // Tons de pele individuais.
+  ['🏻','🏼','🏽','🏾','🏿'].forEach(x => out.add(x));
+  // Todas as bandeiras ISO básicas.
+  for (let a=0x1F1E6; a<=0x1F1FF; a++) for (let b=0x1F1E6; b<=0x1F1FF; b++) out.add(String.fromCodePoint(a,b));
+  return [...out];
+})();
 
 // GIPHY API
 // Cole aqui a API Key criada em GIPHY Developers.
@@ -83,6 +106,7 @@ let state = {
   theme: sessionStorage.getItem('kikochat-theme') || 'dark',
   soundEnabled: sessionStorage.getItem('kikochat-sound') !== 'false',
   replyingTo: null,
+  pendingGif: null,
   searchQuery: '',
   lastRenderedMeta: { name: null, ts: 0 },
   isAtBottom: true,
@@ -1261,14 +1285,15 @@ function selectUser(username) {
 
 // Message handling
 async function sendTextMessage(text) {
-  if (!state.currentUser || !text.trim() || !auth.currentUser) return;
-
-  const cleanText = text.trim();
+  if (!state.currentUser || !auth.currentUser) return;
+  const cleanText = String(text || '').trim();
+  if (!cleanText && !state.pendingGif) return;
   const mentionedUsers = [...cleanText.matchAll(/@([a-zA-Z0-9._-]+)/g)]
     .map(m => mkKey(m[1]))
     .filter(name => !!state.userMap[name]);
+  const pendingGif = state.pendingGif;
   const messageData = {
-    type: "text",
+    type: pendingGif && !cleanText ? "gif" : "text",
     name: state.currentUser.name,
     uid: auth.currentUser.uid,
     text: cleanText,
@@ -1277,6 +1302,13 @@ async function sendTextMessage(text) {
     deliveredBy: { [state.currentUser.name]: true },
     seenBy: { [state.currentUser.name]: true }
   };
+  if (pendingGif?.url) {
+    messageData.gifUrl = pendingGif.url;
+    messageData.data = pendingGif.url;
+    messageData.gifWidth = Number(pendingGif.width) || 0;
+    messageData.gifHeight = Number(pendingGif.height) || 0;
+    messageData.gifTitle = pendingGif.title || 'GIF';
+  }
 
   if (state.replyingTo) {
     messageData.replyTo = {
@@ -1290,6 +1322,7 @@ async function sendTextMessage(text) {
     await push(dbRef(db, chatMessagesPath(state.currentChatId)), messageData);
     elements.textInput.value = '';
     elements.textInput.style.height = 'auto';
+    clearPendingGif();
     updateComposerState();
     clearReply();
   } catch (error) {
@@ -1362,7 +1395,8 @@ function showLoadingState(show) {
 
 function updateComposerState() {
   const hasText = elements.textInput.value.trim().length > 0;
-  elements.sendBtn.classList.toggle('ready', hasText);
+  const hasGif = !!state.pendingGif;
+  elements.sendBtn.classList.toggle('ready', hasText || hasGif);
 }
 
 // Message reactions
@@ -1564,10 +1598,21 @@ function renderMessage(key, msg) {
     gifImg.onerror = () => { gifImg.alt = "GIF indisponível"; };
     bubble.appendChild(gifImg);
   } else {
-    const textContent = document.createElement("div");
-    textContent.className = "message-text";
-    textContent.innerHTML = state.searchQuery ? highlightMatch(msg.text || '', state.searchQuery) : formatText(msg.text || "");
-    bubble.appendChild(textContent);
+    if (msg.text) {
+      const textContent = document.createElement("div");
+      textContent.className = "message-text";
+      textContent.innerHTML = state.searchQuery ? highlightMatch(msg.text || '', state.searchQuery) : formatText(msg.text || "");
+      bubble.appendChild(textContent);
+    }
+    if (msg.gifUrl) {
+      const gifImg = document.createElement("img");
+      gifImg.src = msg.gifUrl;
+      gifImg.className = "chat-media chat-gif";
+      gifImg.alt = msg.gifTitle || "GIF";
+      gifImg.loading = "lazy";
+      gifImg.onerror = () => { gifImg.alt = "GIF indisponível"; };
+      bubble.appendChild(gifImg);
+    }
   }
 
   const footer = document.createElement("div");
@@ -1844,15 +1889,15 @@ function closeGifPicker() {
   if (!picker) return;
   picker.classList.remove('show');
   picker.setAttribute('aria-hidden', 'true');
+  document.getElementById('composerEmojiPicker')?.classList.remove('both-open');
 }
 
 function openGifPicker() {
   const picker = document.getElementById('gifPicker');
   if (!picker) return;
-  const emojiPicker = document.getElementById('emojiPicker');
-  if (emojiPicker) emojiPicker.classList.remove('show');
   picker.classList.toggle('show');
   picker.setAttribute('aria-hidden', picker.classList.contains('show') ? 'false' : 'true');
+  document.getElementById('composerEmojiPicker')?.classList.toggle('both-open', picker.classList.contains('show') && document.getElementById('composerEmojiPicker')?.classList.contains('show'));
   if (picker.classList.contains('show')) {
     setTimeout(() => document.getElementById('gifSearchInput')?.focus(), 30);
   }
@@ -1934,30 +1979,47 @@ async function searchGiphyLocal(query) {
   }
 }
 
-async function sendGifMessage(gif) {
-  if (!state.currentUser || !auth.currentUser || !gif?.url) return;
-
-  const messageData = {
-    type: 'gif',
-    name: state.currentUser.name,
-    uid: auth.currentUser.uid,
-    data: gif.url,
-    gifUrl: gif.url,
+function setPendingGif(gif) {
+  state.pendingGif = gif?.url ? {
+    url: gif.url,
     width: Number(gif.width) || 0,
     height: Number(gif.height) || 0,
-    title: gif.title || 'GIF',
-    ts: Date.now(),
-    deliveredBy: { [state.currentUser.name]: true },
-    seenBy: { [state.currentUser.name]: true }
-  };
-
-  try {
-    await push(dbRef(db, chatMessagesPath(state.currentChatId)), messageData);
-    closeGifPicker();
-  } catch (error) {
-    console.error('Falha ao enviar GIF:', error);
-    showNotification('Não foi possível enviar o GIF. Verifique as regras do Firebase.', 'error');
+    title: gif.title || 'GIF'
+  } : null;
+  const preview = document.getElementById('gifAttachmentPreview');
+  if (!preview) return;
+  preview.innerHTML = '';
+  if (!state.pendingGif) {
+    preview.classList.remove('show');
+    return;
   }
+  const img = document.createElement('img');
+  img.src = state.pendingGif.url;
+  img.alt = state.pendingGif.title;
+  const label = document.createElement('span');
+  label.textContent = 'GIF anexado';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.title = 'Remover GIF';
+  close.innerHTML = '<i class="fas fa-xmark"></i>';
+  close.onclick = clearPendingGif;
+  preview.append(img, label, close);
+  preview.classList.add('show');
+  updateComposerState();
+}
+
+function clearPendingGif() {
+  state.pendingGif = null;
+  const preview = document.getElementById('gifAttachmentPreview');
+  if (preview) { preview.innerHTML = ''; preview.classList.remove('show'); }
+  updateComposerState();
+}
+
+async function sendGifMessage(gif) {
+  if (!state.currentUser || !auth.currentUser || !gif?.url) return;
+  setPendingGif(gif);
+  closeGifPicker();
+  elements.textInput?.focus();
 }
 
 function bindGifPicker() {
@@ -1991,25 +2053,35 @@ const COMPOSER_EMOJIS = ['😀','😂','🤣','😊','😍','🥰','😘','😎'
 function buildComposerEmojiPicker() {
   const picker = document.getElementById('composerEmojiPicker');
   if (!picker) return;
-  picker.innerHTML = COMPOSER_EMOJIS.map(emoji => `<button type="button" class="composer-emoji-option">${emoji}</button>`).join('');
-  picker.querySelectorAll('.composer-emoji-option').forEach(btn => btn.addEventListener('click', () => {
-    const input = elements.textInput;
-    if (!input) return;
-    const start = input.selectionStart ?? input.value.length;
-    const end = input.selectionEnd ?? start;
-    input.value = input.value.slice(0, start) + btn.textContent + input.value.slice(end);
-    input.focus();
-    input.selectionStart = input.selectionEnd = start + btn.textContent.length;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }));
+  picker.innerHTML = '';
+  const fragment = document.createDocumentFragment();
+  EMOJI_SET.forEach(emoji => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'composer-emoji-option';
+    btn.textContent = emoji;
+    btn.title = emoji;
+    btn.addEventListener('click', () => {
+      const input = elements.textInput;
+      if (!input) return;
+      const start = input.selectionStart ?? input.value.length;
+      const end = input.selectionEnd ?? start;
+      input.value = input.value.slice(0, start) + emoji + input.value.slice(end);
+      input.focus();
+      input.selectionStart = input.selectionEnd = start + emoji.length;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    fragment.appendChild(btn);
+  });
+  picker.appendChild(fragment);
 }
 function toggleComposerEmojiPicker() {
   const picker = document.getElementById('composerEmojiPicker');
   if (!picker) return;
   const next = !picker.classList.contains('show');
-  document.getElementById('gifPicker')?.classList.remove('show');
   picker.classList.toggle('show', next);
   picker.setAttribute('aria-hidden', next ? 'false' : 'true');
+  document.getElementById('composerEmojiPicker')?.classList.toggle('both-open', next && document.getElementById('gifPicker')?.classList.contains('show'));
 }
 
 // Emoji picker
@@ -3947,6 +4019,7 @@ body.modal-open { overflow: hidden !important; }
         </div>
         <button id="clearReplyBtn"><i class="fas fa-times"></i></button>
       </div>
+      <div id="gifAttachmentPreview" aria-hidden="true"></div>
 
       <div class="composer" id="composer">
         <button id="attachBtn" class="composer-btn" title="Anexar foto ou vídeo"><i class="fas fa-paperclip"></i></button>
@@ -4299,6 +4372,20 @@ html, body {
 @media (max-width:600px) { #messageToastStack { right:10px; bottom:80px; width:calc(100vw - 20px); } #composerEmojiPicker { right:10px; bottom:78px; } }
 </style>
 
+
+<style id="accea-v18-fixes">
+/* v1.8: emoji completo, GIF + texto juntos e sessão limitada à aba */
+#gifAttachmentPreview { display:none; align-items:center; gap:8px; margin:0 0 7px; padding:7px 9px; width:max-content; max-width:100%; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-tertiary); color:var(--text-secondary); }
+#gifAttachmentPreview.show { display:flex; }
+#gifAttachmentPreview img { width:48px; height:38px; object-fit:cover; border-radius:7px; }
+#gifAttachmentPreview span { font-size:11px; font-weight:700; }
+#gifAttachmentPreview button { width:26px; height:26px; border:0; border-radius:50%; background:transparent; color:var(--text-tertiary); cursor:pointer; }
+#gifAttachmentPreview button:hover { background:var(--bg-elevated); color:var(--error); }
+#composerEmojiPicker { max-height:min(360px,55vh); }
+#composerEmojiPicker.both-open { bottom:calc(86px + min(360px, 55vh) + 10px); }
+.composer-emoji-option { width:100%; min-width:0; }
+@media (max-width:600px) { #composerEmojiPicker.both-open { bottom:calc(78px + min(300px, 45vh) + 10px); } }
+</style>
 </body>
 </html>
 
