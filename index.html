@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-<title>ACCEA v1.8.3</title>
+<title>ACCEA v1.8.6</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500;1,9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -194,7 +194,7 @@ function formatText(text) {
 
   // Links clicáveis, sem permitir HTML/JS vindo da mensagem.
   formatted = formatted.replace(/(^|[\s>])(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi, (full, prefix, rawUrl) => {
-    const trailing = rawUrl.match(/[.,!?;:)}]+$/)?.[0] || '';
+    const trailing = rawUrl.match(/[.,!?;:)]}+$/)?.[0] || '';
     const urlText = trailing ? rawUrl.slice(0, -trailing.length) : rawUrl;
     const href = /^https?:\/\//i.test(urlText) ? urlText : `https://${urlText}`;
     return `${prefix}<a class="message-link" href="${href}" target="_blank" rel="noopener noreferrer">${urlText}</a>${trailing}`;
@@ -202,7 +202,7 @@ function formatText(text) {
 
   // Destaca menções mesmo quando o nome tem acentos, emojis ou símbolos.
   formatted = formatted.replace(/@([^\s@<]+)/gu, (full, name) => {
-    const cleanName = String(name).replace(/[.,!?;:)}]+$/u, '');
+    const cleanName = String(name).replace(/[.,!?;:)]}]+$/u, '');
     const isMe = mkKey(cleanName) === mkKey(state.currentUser?.name);
     return `<span class="mention${isMe ? ' mention-me' : ''}">@${escapeHtml(cleanName)}</span>${escapeHtml(String(name).slice(cleanName.length))}`;
   });
@@ -1041,14 +1041,91 @@ function notifyIncomingMessage(chatId, msg, firebaseKey) {
 
 function attachChatFirebaseListener(chatId) {
   detachChatFirebaseListener();
+
   const path = chatMessagesPath(chatId);
   const reactionsPath = chatReactionsPath(chatId);
   chatFirebasePath = path;
   state.reactions = {};
 
   const messagesRef = dbRef(db, path);
-  const messagesQuery = query(messagesRef, limitToLast(chatId === 'g:accea-geral' ? 50 : 80));
   const reactionsRef = dbRef(db, reactionsPath);
+
+  // O Geral usa o listener que já estava funcionando. Não reconstruímos
+  // a conversa inteira nem usamos get() para decidir quando renderizar.
+  if (chatId === 'g:accea-geral') {
+    const generalQuery = query(messagesRef, limitToLast(20));
+    const seenKeys = new Set();
+    const childUnsubs = [];
+
+    const addGeneralMessage = (snapshot) => {
+      const key = snapshot.key;
+      const value = snapshot.val();
+      if (!key || !value || typeof value !== 'object' || seenKeys.has(key)) return;
+      seenKeys.add(key);
+
+      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
+      const alreadyKnown = !!state.messages[msg.id];
+      state.messages[msg.id] = msg;
+      if (!state.messageOrder.includes(msg.id)) state.messageOrder.push(msg.id);
+      state.messageOrder.sort((a, b) => Number(state.messages[a]?.ts || 0) - Number(state.messages[b]?.ts || 0));
+      renderMessage(msg.id, msg);
+
+      const isIncoming = mkKey(msg.name) !== mkKey(state.currentUser?.name);
+      updateChatMetadata(chatId, msg, isIncoming);
+      // Histórico inicial não gera notificações. O listener de prévias cuida
+      // das mensagens que chegam enquanto estamos em outra conversa.
+      if (isIncoming && alreadyKnown === false && !state.chatInitialLoading) notifyIncomingMessage(chatId, msg, key);
+
+      if (state.currentChatId === chatId) {
+        setTimeout(() => scrollToBottom(false), 20);
+      }
+    };
+
+    childUnsubs.push(onChildAdded(generalQuery, addGeneralMessage));
+
+    childUnsubs.push(onChildChanged(generalQuery, (snapshot) => {
+      const key = snapshot.key;
+      const value = snapshot.val();
+      if (!key || !value || typeof value !== 'object') return;
+
+      const msg = { ...(value || {}), id: value?.id || key, _firebaseKey: key };
+      state.messages[msg.id] = msg;
+
+      const wrapper = elements.messages.querySelector(`[data-message-id="${CSS.escape(msg.id)}"]`);
+      if (wrapper) wrapper.remove();
+      renderMessage(msg.id, msg);
+      updateChatMetadata(chatId, msg, false);
+    }));
+
+    childUnsubs.push(onChildRemoved(generalQuery, (snapshot) => {
+      const key = snapshot.key;
+      const value = snapshot.val();
+      const id = value?.id || key;
+      if (id) delete state.messages[id];
+      const wrapper = id ? elements.messages.querySelector(`[data-message-id="${CSS.escape(id)}"]`) : null;
+      if (wrapper) wrapper.remove();
+      state.messageOrder = state.messageOrder.filter(messageId => messageId !== id);
+    }));
+
+    chatFirebaseUnsub = () => {
+      childUnsubs.forEach(unsub => { try { unsub(); } catch {} });
+      try { chatReactionsUnsub?.(); } catch {}
+      chatReactionsUnsub = null;
+    };
+
+    chatReactionsUnsub = onValue(reactionsRef, (snapshot) => {
+      state.reactions = snapshot.exists() ? snapshot.val() : {};
+      document.querySelectorAll('[data-message-id]').forEach(wrapper => {
+        const messageKey = wrapper.dataset.messageId;
+        const col = wrapper.querySelector('.message-col');
+        if (col) renderReactionsInto(messageKey, col);
+      });
+    }, () => { state.reactions = {}; });
+
+    return;
+  }
+
+  const messagesQuery = query(messagesRef, limitToLast(80));
   const childUnsubs = [];
   const seenKeys = new Set();
   let initialLoading = true;
@@ -1089,23 +1166,7 @@ function attachChatFirebaseListener(chatId) {
     state.messageOrder = state.messageOrder.filter(x => x !== id);
   }));
 
-  // Depois do lote inicial, redesenha em ordem cronológica uma única vez.
-  // Isso elimina divisores "Today" duplicados e garante que a conversa termine no fim.
-  state.chatInitialLoading = true;
-  get(messagesQuery).then(() => {
-    initialLoading = false;
-    const ordered = [...state.messageOrder].sort((a, b) => Number(state.messages[a]?.ts || 0) - Number(state.messages[b]?.ts || 0));
-    state.messageOrder = ordered;
-    elements.messages.innerHTML = '';
-    state.lastRenderedMeta = { name: null, ts: 0 };
-    ordered.forEach(id => renderMessage(id, state.messages[id]));
-    state.chatInitialLoading = false;
-    requestAnimationFrame(() => scrollToBottom(false));
-  }).catch(() => {
-    initialLoading = false;
-    state.chatInitialLoading = false;
-  });
-
+  initialLoading = false;
   chatFirebaseUnsub = () => {
     childUnsubs.forEach(unsub => { try { unsub(); } catch {} });
     try { chatReactionsUnsub?.(); } catch {}
@@ -1208,6 +1269,7 @@ function openChat(chatId) {
   renderConversationList();
   state.chatInitialLoading = true;
   attachChatFirebaseListener(chatId);
+  setTimeout(() => { state.chatInitialLoading = false; }, 250);
   if (window.innerWidth <= 768) document.body.classList.add('show-chat-panel');
   setTimeout(() => scrollToBottom(false), 30);
 }
@@ -1980,6 +2042,7 @@ function renderGifResults(items) {
 
     button.addEventListener('click', () => sendGifMessage({
       url: original.url,
+      previewUrl: preview.url,
       width: original.width,
       height: original.height,
       title: gif.title || 'GIF'
@@ -2025,6 +2088,7 @@ async function searchGiphyLocal(query) {
 function setPendingGif(gif) {
   state.pendingGif = gif?.url ? {
     url: gif.url,
+    previewUrl: gif.previewUrl || gif.url,
     width: Number(gif.width) || 0,
     height: Number(gif.height) || 0,
     title: gif.title || 'GIF'
@@ -2037,8 +2101,12 @@ function setPendingGif(gif) {
     return;
   }
   const img = document.createElement('img');
-  img.src = state.pendingGif.url;
+  img.src = state.pendingGif.previewUrl || state.pendingGif.url;
   img.alt = state.pendingGif.title;
+  img.loading = 'eager';
+  img.onerror = () => {
+    if (img.src !== state.pendingGif.url) img.src = state.pendingGif.url;
+  };
   const label = document.createElement('span');
   label.textContent = 'GIF anexado';
   const close = document.createElement('button');
@@ -4038,7 +4106,7 @@ body.modal-open { overflow: hidden !important; }
     <div class="panel-header">
       <div class="header-left">
         <div class="header-logo">🐰</div>
-        <div class="header-title">ACCEA <span class="app-version">v1.8.3</span></div>
+        <div class="header-title">ACCEA <span class="app-version">v1.8.6</span></div>
       </div>
       <div class="header-actions">
         <button id="themeToggle" class="icon-button" title="Toggle theme"><i class="fas fa-moon"></i></button>
@@ -4365,7 +4433,7 @@ html, body {
 
 
 <style id="accea-v18-fixes">
-/* v1.8: emoji completo, GIF + texto juntos e sessão limitada à aba */
+/* v1.8.6: versão auditada, emoji completo, GIF + texto juntos e sessão limitada à aba */
 #gifAttachmentPreview { display:none; align-items:center; gap:8px; margin:0 0 7px; padding:7px 9px; width:max-content; max-width:100%; border:1px solid var(--border-soft); border-radius:10px; background:var(--bg-tertiary); color:var(--text-secondary); }
 #gifAttachmentPreview.show { display:flex; }
 #gifAttachmentPreview img { width:48px; height:38px; object-fit:cover; border-radius:7px; }
